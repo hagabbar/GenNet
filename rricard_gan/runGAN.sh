@@ -23,14 +23,16 @@ mode=train
 
 # directory for .txt waveform files are stored
 #data_file=/home/hunter.gabbard/Burst/rricard_gan/data/data_1000_samples.pkl
-data_file=/home/hunter.gabbard/Burst/rricard_gan/data/sineGuass_set/sineGauss100b10tau0d1/data.pkl
+
+# For long term, training data should be in the form of Gaussian noise.
+data_file=/home/hunter.gabbard/Burst/GenNet/rricard_gan/data/sineGuass_set/sineGauss100b10tau0d1/data.pkl
 
 # directory for output to be stored
-outdir=/home/hunter.gabbard/public_html/Burst/sine-gaussian_runs/100Hz_waveforms_runs
+outdir=/home/hunter.gabbard/public_html/Burst/sine-gaussian_runs/single_waveform_training
 
 # number of noise and GW waveform samples to train on
-n_samples=1000
-n_epochs=500
+n_samples=1
+n_epochs=1500
 g_lr=(0.5e-1)
 d_lr=(1e-6)
 

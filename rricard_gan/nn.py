@@ -41,7 +41,7 @@ def get_args():
                         help='data file. Please provide FULL path.')
     parser.add_argument('--n-samples', type=int,
                         help='number of waveforms and noise samples to train over (e.g. 10000 would mean 10000 noise and 10000 waveforms signals, 20000 in total.')
-    parser.add_argument('--outdir', type=str,
+    parser.add_argument('--outdir', type=str, default='results',
                         help='Location for output to be stored. Please provide FULL path.')
 
 
@@ -107,9 +107,14 @@ def make_gan(GAN_in, G, D):
 
 def sample_data_and_gen(G, x_train, noise_dim=10, n_samples=10000):
     #XT = sample_data(n_samples=n_samples)
+    # training sample must be noise
     XT = x_train[:n_samples]
     XN_noise = np.random.uniform(0, 1, size=[n_samples, noise_dim])
     XN = G.predict(XN_noise)
+
+    # need to subtract out signal from noise.
+    # XN = h_t - XN 
+
     X = np.concatenate((XT, XN))
     y = np.zeros((2*n_samples, 2))
     y[:n_samples, 1] = 1
@@ -119,10 +124,11 @@ def sample_data_and_gen(G, x_train, noise_dim=10, n_samples=10000):
 def pretrain(G, D, x_train, noise_dim=10, n_samples=10000, batch_size=32):
     X, y = sample_data_and_gen(G, x_train, n_samples=n_samples, noise_dim=noise_dim)
     set_trainability(D, True)
+
     D.fit(X, y, epochs=1, batch_size=batch_size)
 
 def sample_noise(G, noise_dim=10, n_samples=10000):
-    X = np.random.uniform(0, 1, size=[n_samples, noise_dim])
+    X = np.random.uniform(0, 1, size=[n_samples, noise_dim]) # what would happen if changed from 0 to -1?
     y = np.zeros((n_samples, 2))
     y[:, 1] = 1
     return X, y
