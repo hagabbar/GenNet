@@ -27,14 +27,14 @@ from scipy import signal
 # In[2]:
 
 # set variables
-n_total = 1000
+n_total = 500
 n_samples = int(n_total*0.5)
 noise_samples = int(n_total*0.5)
 noise_dim = 10
-batch_size = 64
-epochs = 5000
-g_lr = 1e-3 #0.5e-3
-d_lr = 1e-3 #9e-4
+batch_size = 32
+epochs = 800
+g_lr = 2e-4 #0.5e-3
+d_lr = 6e-4 #9e-4
 
 
 def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi, mul_range=[1, 2]):
@@ -58,10 +58,15 @@ plt.close(ax)
 
 
 def get_generative(G_in, dense_dim=128, out_dim=50, lr=1e-3):
-    x = Dense(dense_dim)(G_in)
-    x = LeakyReLU()(x)
-    x = Dense(dense_dim)(x)
-    x = LeakyReLU()(x)
+    x = Dense(512, activation='relu')(G_in)
+    #x = BatchNormalization()(x)
+    x = Dense(256, activation='relu')(x)
+    x = BatchNormalization()(x)
+    x = Dense(128, activation='relu')(x)
+    x = BatchNormalization()(x)
+    x = Dense(64, activation='relu')(x)
+    x = BatchNormalization()(x)
+    #x = LeakyReLU()(x)
     #x = Dense(dense_dim)(x)
     #x = LeakyReLU()(x)
     #x = Dense(dense_dim)(x)
@@ -71,7 +76,7 @@ def get_generative(G_in, dense_dim=128, out_dim=50, lr=1e-3):
 
     G_out = Dense(out_dim, activation='tanh')(x)
     G = Model(G_in, G_out)
-    opt = SGD(lr=lr*1e-1)
+    opt = SGD(lr=lr)
     G.compile(loss='binary_crossentropy', optimizer=opt)
     return G, G_out
 
@@ -83,21 +88,45 @@ G.summary()
 # In[3]:
 
 
-def get_discriminative(D_in, lr=1e-3, drate=.25, n_channels=25, conv_sz=5, leak=.2):
+def get_discriminative(D_in, lr=1e-3, drate=.25, n_channels=50, conv_sz=5, leak=.2):
+    # old network
+    
+    """
     x = Reshape((-1, 1))(D_in)
     x = Conv1D(n_channels, conv_sz)(x)
-    x = LeakyReLU()(x)
+    x = LeakyReLU(alpha=0.2)(x)
     x = Dropout(drate)(x)
     x = Flatten()(x)
     x = Dense(n_channels)(x)
+    """    
+
+    
+    x = Reshape((-1, 1))(D_in)
+    x = Conv1D(50, 16)(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    x = BatchNormalization()(x)
+    x = Dropout(drate)(x)
+    x = Conv1D(128, 8)(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    x = BatchNormalization()(x)
+    x = Conv1D(256, 4)(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    x = BatchNormalization()(x)
+    x = Conv1D(512, 4)(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    x = BatchNormalization()(x)
+
+    x = Flatten()(x)
+    
     x = Dense(n_channels)(x)
+    x = BatchNormalization()(x)
     D_out = Dense(2, activation='sigmoid')(x)
     D = Model(D_in, D_out)
-    dopt = Adam(lr=lr)
+    dopt = Adam(lr=lr, beta_1=0.5)
     D.compile(loss='binary_crossentropy', optimizer=dopt)
     return D, D_out
 
-D_in = Input(shape=[50])
+D_in = Input(shape=(50,))
 D, D_out = get_discriminative(D_in, lr=d_lr)
 D.summary()
 
@@ -162,7 +191,22 @@ def train(GAN, G, D, epochs=500, n_samples=10000, noise_samples=noise_samples, n
     if verbose:
         e_range = tqdm(e_range)
     for epoch in e_range:
+
+        # use experience replay
+        #if epoch == 0:
+        #    X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+        #    X_past, y_past = X, y
+        #elif epoch%50 == 0 and epoch > 0:
+        #    X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+        #    X_past, y_past = X, y
+        #    X = np.vstack((X[:int(len(X)/2),:],X_past[int(len(X_past)*(3/4)):,:],X[int(len(X)*(3/4)):,:]))
+        #    y = np.vstack((y[:int(len(y)/2),:],y_past[int(len(y_past)*(3/4)):,:],y[int(len(y)*(3/4)):,:]))
+        #else:
+        #    X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+
         X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+
+        # train networks
         set_trainability(D, True)
         d_loss.append(D.train_on_batch(X, y))
         
