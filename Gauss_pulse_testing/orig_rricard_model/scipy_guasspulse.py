@@ -27,12 +27,12 @@ from scipy import signal
 # In[2]:
 
 # set variables
-n_total = 500
+n_total = 2000
 n_samples = int(n_total*0.5)
 noise_samples = int(n_total*0.5)
-noise_dim = 10
+noise_dim = 5
 batch_size = 32
-epochs = 800
+epochs = 500
 g_lr = 2e-4 #0.5e-3
 d_lr = 6e-4 #9e-4
 
@@ -119,7 +119,7 @@ def get_discriminative(D_in, lr=1e-3, drate=.25, n_channels=50, conv_sz=5, leak=
     x = Flatten()(x)
     
     x = Dense(n_channels)(x)
-    x = BatchNormalization()(x)
+    #x = BatchNormalization()(x)
     D_out = Dense(2, activation='sigmoid')(x)
     D = Model(D_in, D_out)
     dopt = Adam(lr=lr, beta_1=0.5)
@@ -193,18 +193,18 @@ def train(GAN, G, D, epochs=500, n_samples=10000, noise_samples=noise_samples, n
     for epoch in e_range:
 
         # use experience replay
-        #if epoch == 0:
-        #    X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
-        #    X_past, y_past = X, y
-        #elif epoch%50 == 0 and epoch > 0:
-        #    X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
-        #    X_past, y_past = X, y
-        #    X = np.vstack((X[:int(len(X)/2),:],X_past[int(len(X_past)*(3/4)):,:],X[int(len(X)*(3/4)):,:]))
-        #    y = np.vstack((y[:int(len(y)/2),:],y_past[int(len(y_past)*(3/4)):,:],y[int(len(y)*(3/4)):,:]))
-        #else:
-        #    X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+        if epoch == 0:
+            X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+            X_past, y_past = X, y
+        elif epoch%5 == 0 and epoch > 0:
+            X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+            X_past, y_past = X, y
+            X = np.vstack((X[:int(len(X)/2),:],X_past[int(len(X_past)*(3/4)):,:],X[int(len(X)*(3/4)):,:]))
+            y = np.vstack((y[:int(len(y)/2),:],y_past[int(len(y_past)*(3/4)):,:],y[int(len(y)*(3/4)):,:]))
+        else:
+            X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
 
-        X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+        #X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
 
         # train networks
         set_trainability(D, True)
