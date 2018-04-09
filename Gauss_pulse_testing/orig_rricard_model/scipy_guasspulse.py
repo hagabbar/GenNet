@@ -32,7 +32,7 @@ n_samples = int(n_total*0.5)
 noise_samples = int(n_total*0.5)
 noise_dim = 1
 batch_size = 32
-epochs = 5000
+epochs = 10000
 g_lr = 4e-4 #2e-4
 d_lr = 4e-4 #6e-4
 
@@ -57,7 +57,7 @@ plt.close(ax)
 # In[4]:
 
 
-def get_generative(G_in, dense_dim=128, drate=0.25, out_dim=50, lr=1e-3):
+def get_generative(G_in, dense_dim=128, drate=0.1, out_dim=50, lr=1e-3):
     # original network
     """
     x = Dense(512, activation='relu')(G_in)
@@ -76,18 +76,22 @@ def get_generative(G_in, dense_dim=128, drate=0.25, out_dim=50, lr=1e-3):
     # transpose convolutional network
     
     x = Reshape((-1,1,1))(G_in)
-    
-    x = Conv2DTranspose(512,(1,4),strides=(1,1),padding='valid',activation='relu')(x)
+    x = BatchNormalization()(x) 
+    x = Conv2DTranspose(1024,(1,4),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     x = Dropout(drate)(x)
-    x = Conv2DTranspose(256,(1,8),strides=(1,1),padding='valid',activation='relu')(x)
+    x = Conv2DTranspose(512,(1,8),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     x = Dropout(drate)(x)
-    x = Conv2DTranspose(128,(1,16),strides=(1,1),padding='valid',activation='relu')(x)
+    x = Conv2DTranspose(256,(1,16),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
-    x = Conv2DTranspose(64,(1,32),strides=(1,1),padding='valid',activation='relu')(x)
+    x = Dropout(drate)(x)
+    x = Conv2DTranspose(128,(1,32),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
+    x = Dropout(drate)(x)
     x = Flatten()(x)
+    x = BatchNormalization()(x)
+    x = Dense(out_dim, activation='relu')(x)
     x = BatchNormalization()(x)
     G_out = Dense(out_dim, activation='tanh')(x)
     #G_out = Conv2DTranspose(1,(1,out_dim))(x)
@@ -254,6 +258,7 @@ ax = pd.DataFrame(
 ).plot(title='Training loss', logy=True)
 ax.set_xlabel("Epochs")
 ax.set_ylabel("Loss")
+ax.set_yscale("log")
 ax = ax.get_figure()
 ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/loss.png')
 plt.close(ax)
@@ -262,7 +267,7 @@ plt.close(ax)
 # In[ ]:
 
 
-N_VIEWED_SAMPLES = 2
+N_VIEWED_SAMPLES = 250
 data_and_gen, _ = sample_data_and_gen(G, noise_samples=N_VIEWED_SAMPLES, n_samples=N_VIEWED_SAMPLES, noise_dim=noise_dim)
 ax = pd.DataFrame(np.transpose(data_and_gen[N_VIEWED_SAMPLES:]))[5:].plot()
 ax = ax.get_figure()
