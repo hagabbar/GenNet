@@ -32,7 +32,7 @@ n_samples = int(n_total*0.5)
 noise_samples = int(n_total*0.5)
 noise_dim = 1
 batch_size = 16
-epochs = 5000
+epochs = 10
 g_lr = 40e-4 #2e-4
 d_lr = 40e-4 #6e-4
 
@@ -275,3 +275,26 @@ ax = ax.get_figure()
 ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/gen_waveform.png')
 plt.close(ax)
 
+# Check whether output distribution is similar to input training set
+# get two distributions
+ai_dist = data_and_gen[N_VIEWED_SAMPLES:]
+sample_orig_dist = sample_data(n_samples)
+
+samp_angle = []
+ai_angle = []
+for idx in range(ai_dist.shape[0]):
+    ai_angle.append(np.arcsin(ai_dist[idx]))
+    samp_angle.append(np.arcsin(sample_orig_dist[idx]))
+
+# make histogram of two distributions
+plt.hist(ai_angle)
+plt.title("Generative network phi histogram")
+plt.xlabel("Value")
+plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/ai_phi_hist.png')
+plt.close()
+
+plt.hist(samp_angle)
+plt.title("Orig training set phi histogram")
+plt.xlabel("Value")
+plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/orig_phi_hist.png')
+plt.close()
