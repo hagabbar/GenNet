@@ -1,8 +1,9 @@
 
-# coding: utf-8
+"""
+This is a script to generate sinusoid waveforms using a DCGAN
 
-# In[1]:
-
+Author: Hunter Gabbard <h.gabbard.1@research.gla.ac.uk>
+"""
 
 import os,sys
 import random
@@ -23,18 +24,29 @@ from keras.optimizers import Adam, SGD
 from keras.callbacks import TensorBoard
 from scipy import signal
 
+class hyperparams():
+    def __init__(self,n_total,n_samples,noise_samples,noise_dim,batch_size,epochs,g_lr,d_lr,loss):
+        # set hyperparamters
+        self.n_total = n_total
+        self.n_samples = n_samples
+        self.noise_samples = noise_samples
+        self.noise_dim = noise_dim
+        self.batch_size = batch_size
+        self.epochs = epochs
+        self.g_lr = g_lr
+        self.d_lr = d_lr
+        self.loss = loss
 
-# In[2]:
-
-# set variables
-n_total = 500
-n_samples = int(n_total*0.5)
-noise_samples = int(n_total*0.5)
-noise_dim = 1
-batch_size = 16
-epochs = 10
-g_lr = 40e-4 #2e-4
-d_lr = 40e-4 #6e-4
+# set hyperparamters
+hyperparams.n_total = 500
+hyperparams.n_samples = int(hyperparams.n_total*0.5)
+hyperparams.noise_samples = int(hyperparams.n_total*0.5)
+hyperparams.noise_dim = 1
+hyperparams.batch_size = 16
+hyperparams.epochs = 10000
+hyperparams.g_lr = 40e-4 #2e-4
+hyperparams.d_lr = 40e-4 #6e-4
+hyperparams.loss = 'binary_crossentropy'
 
 
 def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi, mul_range=[1, 2]):
@@ -47,14 +59,6 @@ def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi,
             np.sin(offset + x_vals * mul)
         )
     return np.array(vectors)
-
-ax = pd.DataFrame(np.transpose(sample_data(25))).plot()
-ax = ax.get_figure()
-ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/input_waveforms.png')
-plt.close(ax)
-
-
-# In[4]:
 
 
 def get_generative(G_in, dense_dim=128, drate=0.1, out_dim=50, lr=1e-3):
@@ -98,17 +102,10 @@ def get_generative(G_in, dense_dim=128, drate=0.1, out_dim=50, lr=1e-3):
     #G_out = Conv2DTranspose(1,(1,out_dim))(x)
     G = Model(G_in, G_out)
     opt = SGD(lr=lr)
-    G.compile(loss='binary_crossentropy', optimizer=opt)
+    G.compile(loss=hyperparams.loss, optimizer=opt)
     
 
     return G, G_out
-
-G_in = Input(shape=(1,noise_dim))
-G, G_out = get_generative(G_in, lr=g_lr)
-G.summary()
-
-
-# In[3]:
 
 
 def get_discriminative(D_in, lr=1e-3, drate=.25, n_channels=50, conv_sz=5, leak=.2):
@@ -144,17 +141,8 @@ def get_discriminative(D_in, lr=1e-3, drate=.25, n_channels=50, conv_sz=5, leak=
     D_out = Dense(2, activation='sigmoid')(x)
     D = Model(D_in, D_out)
     dopt = Adam(lr=lr, beta_1=0.5)
-    D.compile(loss='binary_crossentropy', optimizer=dopt)
+    D.compile(loss=hyperparams.loss, optimizer=dopt)
     return D, D_out
-
-D_in = Input(shape=(50,))
-D, D_out = get_discriminative(D_in, lr=d_lr)
-D.summary()
-
-
-
-# In[5]:
-
 
 def set_trainability(model, trainable=False):
     model.trainable = trainable
@@ -166,16 +154,8 @@ def make_gan(GAN_in, G, D):
     x = G(GAN_in)
     GAN_out = D(x)
     GAN = Model(GAN_in, GAN_out)
-    GAN.compile(loss='binary_crossentropy', optimizer=G.optimizer)
+    GAN.compile(loss=hyperparams.loss, optimizer=G.optimizer)
     return GAN, GAN_out
-
-GAN_in = Input((1,noise_dim))
-GAN, GAN_out = make_gan(GAN_in, G, D)
-GAN.summary()
-
-
-
-# In[6]:
 
 
 def sample_data_and_gen(G, noise_dim=10, n_samples=10000, noise_samples=100):
@@ -198,10 +178,6 @@ def pretrain(G, D, noise_dim=10, n_samples=10000, noise_samples=10000, batch_siz
 
     D.fit(X, y, epochs=1, batch_size=batch_size)
 
-pretrain(G, D, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim, batch_size=batch_size)
-
-# In[ ]:
-
 
 def sample_noise(G, noise_dim=10, n_samples=10000):
     X = np.random.uniform(-1, 1, size=[n_samples, 1, noise_dim])
@@ -209,7 +185,7 @@ def sample_noise(G, noise_dim=10, n_samples=10000):
     y[:, 1] = 1
     return X, y
 
-def train(GAN, G, D, epochs=500, n_samples=10000, noise_samples=noise_samples, noise_dim=10, batch_size=32, verbose=False, v_freq=1):
+def train(GAN, G, D, epochs=500, n_samples=10000, noise_samples=hyperparams.noise_samples, noise_dim=10, batch_size=32, verbose=False, v_freq=1):
     d_loss = []
     g_loss = []
     e_range = range(epochs)
@@ -244,57 +220,77 @@ def train(GAN, G, D, epochs=500, n_samples=10000, noise_samples=noise_samples, n
             print("Epoch #{}: Generative Loss: {}, Discriminative Loss: {}".format(epoch + 1, g_loss[-1], d_loss[-1]))
     return d_loss, g_loss
 
-d_loss, g_loss = train(GAN, G, D, epochs=epochs, n_samples=n_samples,
-                       noise_samples=noise_samples, noise_dim=noise_dim, batch_size=batch_size, verbose=True)
+def main():
+
+    ax = pd.DataFrame(np.transpose(sample_data(25))).plot()
+    ax = ax.get_figure()
+    ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/input_waveforms.png')
+    plt.close(ax)
+
+    G_in = Input(shape=(1,hyperparams.noise_dim))
+    G, G_out = get_generative(G_in, lr=hyperparams.g_lr)
+    G.summary()
+
+    D_in = Input(shape=(50,))
+    D, D_out = get_discriminative(D_in, lr=hyperparams.d_lr)
+    D.summary()
+
+    GAN_in = Input((1,hyperparams.noise_dim))
+    GAN, GAN_out = make_gan(GAN_in, G, D)
+    GAN.summary()
+
+    pretrain(G, D, n_samples=hyperparams.n_samples, noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size)
 
 
-# In[ ]:
+    d_loss, g_loss = train(GAN, G, D, epochs=hyperparams.epochs, n_samples=hyperparams.n_samples,
+                           noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size, verbose=True)
 
 
-ax = pd.DataFrame(
-    {
-        'Generative Loss': g_loss,
-        'Discriminative Loss': d_loss,
-    }
-).plot(title='Training loss', logy=True)
-ax.set_xlabel("Epochs")
-ax.set_ylabel("Loss")
-ax.set_yscale("log")
-ax = ax.get_figure()
-ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/loss.png')
-plt.close(ax)
+    ax = pd.DataFrame(
+        {
+            'Generative Loss': g_loss,
+            'Discriminative Loss': d_loss,
+        }
+    ).plot(title='Training loss', logy=True)
+    ax.set_xlabel("Epochs")
+    ax.set_ylabel("Loss")
+    ax.set_yscale("log")
+    ax = ax.get_figure()
+    ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/loss.png')
+    plt.close(ax)
 
 
-# In[ ]:
+    N_VIEWED_SAMPLES = 250
+    data_and_gen, _ = sample_data_and_gen(G, noise_samples=N_VIEWED_SAMPLES, n_samples=N_VIEWED_SAMPLES, noise_dim=hyperparams.noise_dim)
+    ax = pd.DataFrame(np.transpose(data_and_gen[N_VIEWED_SAMPLES:]))[5:].plot()
+    ax = ax.get_figure()
+    ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/gen_waveform.png')
+    plt.close(ax)
 
+    # Check whether output distribution is similar to input training set
+    # get two distributions
+    ai_dist = data_and_gen[N_VIEWED_SAMPLES:]
+    sample_orig_dist = sample_data(hyperparams.n_samples)
 
-N_VIEWED_SAMPLES = 250
-data_and_gen, _ = sample_data_and_gen(G, noise_samples=N_VIEWED_SAMPLES, n_samples=N_VIEWED_SAMPLES, noise_dim=noise_dim)
-ax = pd.DataFrame(np.transpose(data_and_gen[N_VIEWED_SAMPLES:]))[5:].plot()
-ax = ax.get_figure()
-ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/gen_waveform.png')
-plt.close(ax)
+    samp_angle = []
+    ai_angle = []
+    # calculate phi for both distributions
+    for idx in range(ai_dist.shape[0]):
+        ai_angle.append(np.arcsin(ai_dist[idx]))
+        samp_angle.append(np.arcsin(sample_orig_dist[idx]))
 
-# Check whether output distribution is similar to input training set
-# get two distributions
-ai_dist = data_and_gen[N_VIEWED_SAMPLES:]
-sample_orig_dist = sample_data(n_samples)
+    # make histogram of two distributions
+    plt.hist(ai_angle)
+    plt.title("Generative network phi histogram")
+    plt.xlabel("Value")
+    plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/ai_phi_hist.png')
+    plt.close()
 
-samp_angle = []
-ai_angle = []
-for idx in range(ai_dist.shape[0]):
-    ai_angle.append(np.arcsin(ai_dist[idx]))
-    samp_angle.append(np.arcsin(sample_orig_dist[idx]))
+    plt.hist(samp_angle)
+    plt.title("Orig training set phi histogram")
+    plt.xlabel("Value")
+    plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/orig_phi_hist.png')
+    plt.close()
 
-# make histogram of two distributions
-plt.hist(ai_angle)
-plt.title("Generative network phi histogram")
-plt.xlabel("Value")
-plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/ai_phi_hist.png')
-plt.close()
-
-plt.hist(samp_angle)
-plt.title("Orig training set phi histogram")
-plt.xlabel("Value")
-plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/orig_phi_hist.png')
-plt.close()
+if __name__ == '__main__':
+    main()
