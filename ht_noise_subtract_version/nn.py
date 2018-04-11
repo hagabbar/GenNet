@@ -27,6 +27,7 @@ from keras.optimizers import Adam, SGD
 from keras.callbacks import TensorBoard
 import argparse
 import pickle
+from scipy.signal import resample
 
 #Configure tensorflow to use gpu memory as needed
 config = tf.ConfigProto()
@@ -45,6 +46,17 @@ class hyperparams():
         self.g_lr = g_lr
         self.d_lr = d_lr
         self.loss = loss
+
+# set hyperparamters
+hyperparams.n_total = 500
+hyperparams.n_samples = int(hyperparams.n_total*0.5)
+hyperparams.noise_samples = int(hyperparams.n_total*0.5)
+hyperparams.noise_dim = 1
+hyperparams.batch_size = 16
+hyperparams.epochs = 10000
+hyperparams.g_lr = 40e-4 #2e-4
+hyperparams.d_lr = 40e-4 #6e-4
+hyperparams.loss = 'binary_crossentropy'
 
 def get_args():
     parser = argparse.ArgumentParser(prog='nn.py', description='Generative Adversarial Neural Network in keras with tensorflow')
@@ -162,9 +174,15 @@ def make_gan(GAN_in, G, D):
     GAN.compile(loss=hyperparams.loss, optimizer=G.optimizer)
     return GAN, GAN_out
 
-def sample_data_and_gen(G, x_train, noise_dim=10, n_samples=10000, noise_samples=100):
-    XT = x_train[:n_samples]
-    XN_noise = np.random.uniform(-1, 1, size=[noise_samples, 1, noise_dim])
+def sample_data_and_gen(G, ht_train, noise_dim=10, n_samples=10000, noise_samples=100):
+    XT = ht_train
+    XN_noise = np.random.normal(-1, 1, size=[noise_samples, 1, noise_dim])
+
+    # subtract out generated waveform from signal
+    for s in range(noise_samples):
+        XN_noise[s] =  XT - XN_noise[s]
+    print('signal shape: %d' % XN_noise.shape)
+    sys.exit()
     XT = np.resize(XT, (XT.shape[0],1,XT.shape[1]))
 
     XN = G.predict(XN_noise)
@@ -175,20 +193,20 @@ def sample_data_and_gen(G, x_train, noise_dim=10, n_samples=10000, noise_samples
     y[n_samples:, 0] = 1
     return X, y
 
-def pretrain(G, D, noise_dim=10, n_samples=10000, noise_samples=10000, batch_size=32):
-    X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+def pretrain(G, D, ht_train, noise_dim=10, n_samples=10000, noise_samples=10000, batch_size=32):
+    X, y = sample_data_and_gen(G, ht_train=ht_train, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
     set_trainability(D, True)
 
 
     D.fit(X, y, epochs=1, batch_size=batch_size)
 
 def sample_noise(G, noise_dim=10, n_samples=10000):
-    X = np.random.uniform(-1, 1, size=[n_samples, 1, noise_dim])
+    X = np.random.normal(-1, 1, size=[n_samples, 1, noise_dim])
     y = np.zeros((n_samples, 2))
     y[:, 1] = 1
     return X, y
 
-def train(GAN, G, D, epochs=500, n_samples=10000, noise_samples=hyperparams.noise_samples, noise_dim=10, batch_size=32, verbose=False, v_freq=1):
+def train(GAN, G, D, ht_train, epochs=500, n_samples=10000, noise_samples=hyperparams.noise_samples, noise_dim=10, batch_size=32, verbose=False, v_freq=1):
     d_loss = []
     g_loss = []
     e_range = range(epochs)
@@ -210,7 +228,7 @@ def train(GAN, G, D, epochs=500, n_samples=10000, noise_samples=hyperparams.nois
             X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
         """
 
-        X, y = sample_data_and_gen(G, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+        X, y = sample_data_and_gen(G, ht_train, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
 
         # train networks
         set_trainability(D, True)
@@ -240,19 +258,19 @@ def load_data(path,n_samples):
 def main():
     args = get_args()
 
-    # set hyperparamters
-    hyperparams.n_total = 500
-    hyperparams.n_samples = int(hyperparams.n_total*0.5)
-    hyperparams.noise_samples = int(hyperparams.n_total*0.5)
-    hyperparams.noise_dim = 1
-    hyperparams.batch_size = 16
-    hyperparams.epochs = 10000
-    hyperparams.g_lr = 40e-4 #2e-4
-    hyperparams.d_lr = 40e-4 #6e-4
-    hyperparams.loss = 'binary_crossentropy'
-
-    ht_train = load_data(args.datafile,args.n_samples)
-
+    ht_train = load_data(args.datafile,args.n_samples)[0] 
+    #plt.plot(ht_train[0])
+    #plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/input_waveforms.png')
+    #plt.close()
+    #sys.exit()
+    
+    xt_train = ht_train + np.random.normal(-1, 1, size=[ht_train[0], 1, ht_train[2]])
+    sys.exit()
+    #ax = pd.DataFrame(np.transpose(ht_train[:25])).plot(legend=False)
+    #ax = ax.get_figure()
+    #ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/input_waveforms.png')
+    #plt.close(ax)
+    #sys.exit()
 
     G_in = Input(shape=(1,hyperparams.noise_dim))
     G, G_out = get_generative(G_in, lr=hyperparams.g_lr)
@@ -266,11 +284,14 @@ def main():
     GAN, GAN_out = make_gan(GAN_in, G, D)
     GAN.summary()
 
-    pretrain(G, D, n_samples=hyperparams.n_samples, noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size)
+    pretrain(G, D, xt_train, n_samples=hyperparams.n_samples, noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size)
 
 
-    d_loss, g_loss = train(GAN, G, D, epochs=hyperparams.epochs, n_samples=hyperparams.n_samples,
+    d_loss, g_loss = train(GAN, G, D, xt_train, epochs=hyperparams.epochs, n_samples=hyperparams.n_samples,
                            noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size, verbose=True)
+
+    print('dont plot anything yet')
+    sys.exit()
 
     # create directory if it does not exist
     if not os.path.exists('{0}'.format(args.outdir)):
@@ -288,7 +309,7 @@ def main():
 
     # plot an example of the first waveform in the trianing
     # set.
-    plt.plot(x_train[0])
+    plt.plot(ht_train[0])
     plt.savefig('{0}/run{1}/original_wvf_ex.png'.format(args.outdir,Nrun))
     plt.close()
 
@@ -302,7 +323,7 @@ def main():
     ax.set_ylabel("Loss")
     ax.set_yscale("log")
     ax = ax.get_figure()
-    ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/loss.png')
+    ax.savefig('{0}/run{1}/loss.png'.format(args.outdir,Nrun))
     plt.close(ax)
 
 
@@ -310,11 +331,12 @@ def main():
     data_and_gen, _ = sample_data_and_gen(G, noise_samples=N_VIEWED_SAMPLES, n_samples=N_VIEWED_SAMPLES, noise_dim=hyperparams.noise_dim)
     ax = pd.DataFrame(np.transpose(data_and_gen[N_VIEWED_SAMPLES:]))[5:].plot()
     ax = ax.get_figure()
-    ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/gen_waveform.png')
+    ax.savefig('{0}/run{1}/gen_waveform.png'.format(args.outdir,Nrun))
     plt.close(ax)
 
     # Check whether output distribution is similar to input training set
     # get two distributions
+    """
     ai_dist = data_and_gen[N_VIEWED_SAMPLES:]
     sample_orig_dist = sample_data(hyperparams.n_samples)
 
@@ -337,6 +359,7 @@ def main():
     plt.xlabel("Value")
     plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/orig_phi_hist.png')
     plt.close()
+    """
 
 if __name__ == "__main__":
     main()

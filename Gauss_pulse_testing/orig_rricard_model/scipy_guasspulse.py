@@ -81,16 +81,16 @@ def get_generative(G_in, dense_dim=128, drate=0.1, out_dim=50, lr=1e-3):
     
     x = Reshape((-1,1,1))(G_in)
     x = BatchNormalization()(x) 
-    x = Conv2DTranspose(128,(1,4),strides=(1,1),padding='valid',activation='relu')(x)
+    x = Conv2DTranspose(256,(1,4),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
-    x = Conv2DTranspose(64,(1,8),strides=(1,1),padding='valid',activation='relu')(x)
+    x = Conv2DTranspose(128,(1,8),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
-    x = Conv2DTranspose(32,(1,16),strides=(1,1),padding='valid',activation='relu')(x)
+    x = Conv2DTranspose(64,(1,16),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
-    x = Conv2DTranspose(16,(1,32),strides=(1,1),padding='valid',activation='relu')(x)
+    x = Conv2DTranspose(32,(1,32),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
     x = Flatten()(x)
@@ -276,17 +276,17 @@ def main():
     ai_angle = []
     # calculate phi for both distributions
     for idx in range(ai_dist.shape[0]):
-        ai_angle.append(np.arcsin(ai_dist[idx]))
-        samp_angle.append(np.arcsin(sample_orig_dist[idx]))
+        ai_angle.append(np.arcsin(ai_dist[idx][0]))
+        samp_angle.append(np.arcsin(sample_orig_dist[idx][0]))
 
     # make histogram of two distributions
-    plt.hist(ai_angle)
+    plt.hist(ai_angle, bins=25)
     plt.title("Generative network phi histogram")
     plt.xlabel("Value")
     plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/ai_phi_hist.png')
     plt.close()
 
-    plt.hist(samp_angle)
+    plt.hist(samp_angle, bins=25)
     plt.title("Orig training set phi histogram")
     plt.xlabel("Value")
     plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/orig_phi_hist.png')

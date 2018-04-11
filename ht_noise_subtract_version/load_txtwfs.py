@@ -28,7 +28,7 @@ def load_data(path,n_samples):
         print("Loading waveform #{}".format(counter))
         if counter == 0:
             data = np.loadtxt(filename)
-            data = resample(data, 8192)
+            #data = resample(data, 8192)
             data /= np.max(data)
             # plot first waveform in training set
             #plt.plot(data)
@@ -38,7 +38,7 @@ def load_data(path,n_samples):
             break
         else:
             data_new = np.loadtxt(filename)
-            data_new = resample(data_new, 8192)
+            #data_new = resample(data_new, 8192)
             data_new /= np.max(data_new)
             data = np.vstack((data,data_new))
 
