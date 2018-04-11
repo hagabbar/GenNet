@@ -7,7 +7,7 @@
 #export LIBRARY_PATH=$LIBRARY_PATH:/home/2136420/theanoenv/lib
 #export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/2136420/theanoenv/lib
 
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 
 #####################
 # Running the network
@@ -25,7 +25,7 @@ mode=train
 #data_file=/home/hunter.gabbard/Burst/rricard_gan/data/data_1000_samples.pkl
 
 # For long term, training data should be in the form of Gaussian noise.
-data_file=/home/hunter.gabbard/Burst/GenNet/ht_noise_subtract_version/data/sineGuass_set/sineGauss100b10tau0d1/data.pkl
+data_file=/home/hunter.gabbard/Burst/GenNet/ht_noise_subtract_version/data/data.pkl
 
 # directory for output to be stored
 outdir=/home/hunter.gabbard/public_html/Burst/sine-gaussian_runs/single_waveform_training

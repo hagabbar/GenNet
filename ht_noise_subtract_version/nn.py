@@ -21,7 +21,7 @@ from keras.models import Model
 from keras.layers import Input, Reshape
 from keras.layers.core import Dense, Activation, Dropout, Flatten
 from keras.layers.normalization import BatchNormalization
-from keras.layers.convolutional import UpSampling1D, Conv1D
+from keras.layers.convolutional import UpSampling1D, Conv1D, Conv2DTranspose
 from keras.layers.advanced_activations import LeakyReLU
 from keras.optimizers import Adam, SGD
 from keras.callbacks import TensorBoard
@@ -35,7 +35,7 @@ config.gpu_options.allow_growth = True
 session = tf.Session(config=config)
 
 class hyperparams():
-    def __init__(self,n_total,n_samples,noise_samples,noise_dim,batch_size,epochs,g_lr,d_lr,loss):
+    def __init__(self,n_total,n_samples,noise_samples,noise_dim,batch_size,epochs,g_lr,d_lr,loss,srate):
         # set hyperparamters
         self.n_total = n_total
         self.n_samples = n_samples
@@ -46,6 +46,7 @@ class hyperparams():
         self.g_lr = g_lr
         self.d_lr = d_lr
         self.loss = loss
+        self.srate = srate
 
 # set hyperparamters
 hyperparams.n_total = 500
@@ -57,6 +58,7 @@ hyperparams.epochs = 10000
 hyperparams.g_lr = 40e-4 #2e-4
 hyperparams.d_lr = 40e-4 #6e-4
 hyperparams.loss = 'binary_crossentropy'
+hyperparams.srate = 512
 
 def get_args():
     parser = argparse.ArgumentParser(prog='nn.py', description='Generative Adversarial Neural Network in keras with tensorflow')
@@ -175,18 +177,18 @@ def make_gan(GAN_in, G, D):
     return GAN, GAN_out
 
 def sample_data_and_gen(G, ht_train, noise_dim=10, n_samples=10000, noise_samples=100):
-    XT = ht_train
+    # get real random gaussian noise
+    XT = np.random.normal(-1, 1, size=[n_samples, 1, hyperparams.srate])
+    # get fake latent variables to feed into G
     XN_noise = np.random.normal(-1, 1, size=[noise_samples, 1, noise_dim])
 
-    # subtract out generated waveform from signal
+    # produce fake signals from G
+    XN = G.predict(XN_noise)
+    # subtract out generated waveform from signal for each fake gen waveform
     for s in range(noise_samples):
-        XN_noise[s] =  XT - XN_noise[s]
+        XN_noise[s] =  ht_train - XN_noise[s]
     print('signal shape: %d' % XN_noise.shape)
     sys.exit()
-    XT = np.resize(XT, (XT.shape[0],1,XT.shape[1]))
-
-    XN = G.predict(XN_noise)
-    XT = np.resize(XT, (XT.shape[0],XT.shape[2]))
     X = np.vstack((XT, XN))
     y = np.zeros((n_samples+len(XN_noise), 2))
     y[:n_samples, 1] = 1
@@ -258,14 +260,13 @@ def load_data(path,n_samples):
 def main():
     args = get_args()
 
-    ht_train = load_data(args.datafile,args.n_samples)[0] 
+    ht_train = load_data(args.datafile,args.n_samples)[0]
+    ht_train = np.resize(ht_train, (1,1,ht_train.shape[0]))
     #plt.plot(ht_train[0])
     #plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/input_waveforms.png')
     #plt.close()
     #sys.exit()
-    
-    xt_train = ht_train + np.random.normal(-1, 1, size=[ht_train[0], 1, ht_train[2]])
-    sys.exit()
+    xt_train = ht_train + np.random.normal(-1, 1, size=[1, 1, ht_train.shape[2]])
     #ax = pd.DataFrame(np.transpose(ht_train[:25])).plot(legend=False)
     #ax = ax.get_figure()
     #ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/input_waveforms.png')
