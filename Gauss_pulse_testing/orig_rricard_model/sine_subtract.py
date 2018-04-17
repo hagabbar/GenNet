@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm_notebook as tqdm
 from keras.models import Model
-from keras.layers import Input, Reshape, Conv2DTranspose
+from keras.layers import Input, Reshape, Conv2DTranspose, GaussianDropout
 from keras.layers.core import Dense, Activation, Dropout, Flatten
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling1D, Conv1D
@@ -41,14 +41,14 @@ class hyperparams():
         self.noise_level = noise_level
 
 # set hyperparamters
-hyperparams.n_total = 20000
+hyperparams.n_total = 500
 hyperparams.n_samples = int(hyperparams.n_total*0.5)
 hyperparams.noise_samples = int(hyperparams.n_total*0.5)
 hyperparams.noise_dim = 1
 hyperparams.batch_size = 16
-hyperparams.epochs = 5000
-hyperparams.g_lr = 40e-4 #2e-4
-hyperparams.d_lr = 40e-4 #6e-4
+hyperparams.epochs = 20000
+hyperparams.g_lr = 1.5e-3 #4e-3
+hyperparams.d_lr = 1.5e-6 #4e-6
 hyperparams.loss = 'binary_crossentropy'
 hyperparams.outdim = 50
 hyperparams.noise_level = 0.25
@@ -59,7 +59,7 @@ def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi,
     for i in range(n_samples):
         offset = np.random.random() * max_offset
         #mul = mul_range[0] + np.random.random() * (mul_range[1] - mul_range[0])
-        mul = (2 * np.pi) / 5 
+        mul = (2 * np.pi) / 5
         vectors.append(
             np.sin(offset + x_vals * mul)
         )
@@ -67,55 +67,43 @@ def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi,
 
 
 def get_generative(G_in, dense_dim=128, drate=0.1, out_dim=50, lr=1e-3):
-    # original network
-    """
-    x = Dense(512, activation='relu')(G_in)
-    x = Dense(256, activation='relu')(x)
-    x = BatchNormalization()(x)
-    x = Dense(128, activation='relu')(x)
-    x = BatchNormalization()(x)
-    x = Dense(64, activation='relu')(x)
-    x = BatchNormalization()(x)
-    G_out = Dense(out_dim, activation='tanh')(x)
-    G = Model(G_in, G_out)
-    opt = SGD(lr=lr)
-    G.compile(loss='binary_crossentropy', optimizer=opt)
-    """
 
     # transpose convolutional network
-    
+
     x = Reshape((-1,1,1))(G_in)
-    x = BatchNormalization()(x) 
-    x = Conv2DTranspose(256,(1,4),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
-    #x = Dropout(drate)(x)
-    x = Conv2DTranspose(128,(1,8),strides=(1,1),padding='valid',activation='relu')(x)
+    x = Conv2DTranspose(1024,(1,4),strides=(1,1),padding='same',activation='relu')(x)
     x = BatchNormalization()(x)
-    #x = Dropout(drate)(x)
-    x = Conv2DTranspose(64,(1,16),strides=(1,1),padding='valid',activation='relu')(x)
+    x = GaussianDropout(drate)(x)
+    x = Conv2DTranspose(512,(1,8),strides=(1,1),padding='same',activation='relu')(x)
     x = BatchNormalization()(x)
-    #x = Dropout(drate)(x)
-    x = Conv2DTranspose(32,(1,32),strides=(1,1),padding='valid',activation='relu')(x)
+    x = GaussianDropout(drate)(x)
+    x = Conv2DTranspose(256,(1,16),strides=(1,1),padding='same',activation='relu')(x)
     x = BatchNormalization()(x)
-    #x = Dropout(drate)(x)
+    x = GaussianDropout(drate)(x)
+    x = Conv2DTranspose(128,(1,32),strides=(1,1),padding='same',activation='relu')(x)
+    x = BatchNormalization()(x)
+    x = GaussianDropout(drate)(x)
+    x = BatchNormalization()(x)
     x = Flatten()(x)
     x = BatchNormalization()(x)
-    x = Dense(out_dim, activation='relu')(x)
-    x = BatchNormalization()(x)
+    #x = Dense(out_dim, activation='relu')(x)
+    #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
     G_out = Dense(out_dim, activation='tanh')(x)
+    #G_out = BatchNormalization()(G_out)
     #G_out = Conv2DTranspose(1,(1,out_dim))(x)
     G = Model(G_in, G_out)
     opt = SGD(lr=lr)
     G.compile(loss=hyperparams.loss, optimizer=opt)
-    
+
 
     return G, G_out
 
 
 def get_discriminative(D_in, lr=1e-3, drate=.25, n_channels=50, conv_sz=5, leak=.2):
     # old network
-    
+
     """
     x = Reshape((-1, 1))(D_in)
     x = Conv1D(n_channels, conv_sz)(x)
@@ -123,27 +111,30 @@ def get_discriminative(D_in, lr=1e-3, drate=.25, n_channels=50, conv_sz=5, leak=
     x = Dropout(drate)(x)
     x = Flatten()(x)
     x = Dense(n_channels)(x)
-    """    
+    """
 
-    
+
     x = Reshape((-1, 1))(D_in)
-    x = Conv1D(50, 16)(x)
+    x = Conv1D(64, 16, strides=1, padding='same')(x)
     x = LeakyReLU(alpha=0.2)(x)
-    #x = BatchNormalization()(x)
-    #x = Dropout(drate)(x)
-    #x = Conv1D(128, 8)(x)
-    #x = LeakyReLU(alpha=0.2)(x)
-    #x = BatchNormalization()(x)
+    x = BatchNormalization()(x)
+    #x = GaussianDropout(drate)(x)
+    x = Conv1D(128, 8)(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    x = BatchNormalization()(x)
+    x = GaussianDropout(drate)(x)
     #x = Conv1D(256, 4)(x)
     #x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     #x = Conv1D(512, 4)(x)
     #x = LeakyReLU(alpha=0.2)(x)
-    #x = BatchNormalization()(x)
-    
+    x = BatchNormalization()(x)
     x = Flatten()(x)
-    x = Dense(n_channels)(x)
+    x = BatchNormalization()(x)
+    #x = Dense(n_channels)(x)
+    #x = BatchNormalization()(x)
     D_out = Dense(2, activation='sigmoid')(x)
+    D_out = BatchNormalization()(D_out) # may have to add this in later.
     D = Model(D_in, D_out)
     dopt = Adam(lr=lr, beta_1=0.5)
     D.compile(loss=hyperparams.loss, optimizer=dopt)
@@ -153,7 +144,7 @@ def set_trainability(model, trainable=False):
     model.trainable = trainable
     for layer in model.layers:
         layer.trainable = trainable
-        
+
 def make_gan(GAN_in, G, D):
     set_trainability(D, False)
     x = G(GAN_in)
@@ -220,7 +211,7 @@ def train(GAN, G, D, xt_train, epochs=500, n_samples=10000, noise_samples=hyperp
         # train networks
         set_trainability(D, True)
         d_loss.append(D.train_on_batch(X, y))
-        
+
         X, y = sample_noise(G, n_samples=noise_samples, noise_dim=noise_dim)
         set_trainability(D, False)
         g_loss.append(GAN.train_on_batch(X, y))
@@ -229,12 +220,14 @@ def train(GAN, G, D, xt_train, epochs=500, n_samples=10000, noise_samples=hyperp
     return d_loss, g_loss
 
 def main():
+    outdir = 'output/'
+
     ht_train = sample_data(1)
     xt_train = ht_train + np.random.normal(-hyperparams.noise_level, hyperparams.noise_level, size=[1, ht_train.shape[1]])
 
     ax = pd.DataFrame(np.transpose(ht_train)).plot(legend=False)
     ax = ax.get_figure()
-    ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/input_waveforms.png')
+    ax.savefig('%sinput_waveforms.png' % outdir, dpi=1200)
     plt.close(ax)
 
     G_in = Input(shape=(1,hyperparams.noise_dim))
@@ -266,7 +259,7 @@ def main():
     ax.set_ylabel("Loss")
     ax.set_yscale("log")
     ax = ax.get_figure()
-    ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/loss.png')
+    ax.savefig('%sloss.png' % outdir, dpi=1200)
     plt.close(ax)
 
 
@@ -274,7 +267,7 @@ def main():
     data_and_gen, _ = sample_data_and_gen(G, xt_train, noise_samples=N_VIEWED_SAMPLES, n_samples=N_VIEWED_SAMPLES, noise_dim=hyperparams.noise_dim)
     ax = pd.DataFrame(np.transpose(data_and_gen[N_VIEWED_SAMPLES:]))[5:].plot(legend=False)
     ax = ax.get_figure()
-    ax.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/gen_waveform.png')
+    ax.savefig('%sgen_waveform.png' % outdir, dpi=1200)
     plt.close(ax)
 
     """
