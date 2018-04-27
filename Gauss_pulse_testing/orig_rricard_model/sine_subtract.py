@@ -45,11 +45,11 @@ class hyperparams():
 hyperparams.n_total = 100
 hyperparams.n_samples = int(hyperparams.n_total*0.5)
 hyperparams.noise_samples = int(hyperparams.n_total*0.5)
-hyperparams.noise_dim = 1
+hyperparams.noise_dim = 10
 hyperparams.batch_size = 16
-hyperparams.epochs = 1000
+hyperparams.epochs = 300
 hyperparams.g_lr = 4e-2 #4e-3
-hyperparams.d_lr = 9e-5 #4e-6
+hyperparams.d_lr = 4e-5#4e-6
 hyperparams.loss = 'binary_crossentropy'
 hyperparams.outdim = 50
 hyperparams.noise_level = 0.25
@@ -73,21 +73,21 @@ def get_generative(G_in, dense_dim=128, drate=0.25, out_dim=50, lr=1e-3):
 
     x = Reshape((-1,1,1))(G_in)
     #x = BatchNormalization()(x)
-    x = Conv2DTranspose(256,(1,4),strides=(1,1),padding='valid',activation='elu')(x)
+    x = Conv2DTranspose(4,(1,4),strides=(1,8),padding='valid',activation='elu')(x) # stride of 8 worked well here.
     #x = BatchNormalization()(x)
     # kernel_regularizer=regularizers.l2(0.01)
     x = GaussianDropout(drate)(x)
-    x = Conv2DTranspose(128,(1,8),strides=(1,1),padding='valid',activation='elu')(x)
-    x = GaussianDropout(drate)(x)
-    x = BatchNormalization()(x)
-    x = Conv2DTranspose(64,(1,16),strides=(1,1),padding='valid',activation='elu')(x)
-    x = GaussianDropout(drate)(x)
+    x = Conv2DTranspose(4,(1,8),strides=(1,2),padding='valid',activation='elu')(x)
+    #x = GaussianDropout(drate)(x)
+    #x = BatchNormalization()(x)
+    x = Conv2DTranspose(4,(1,16),strides=(1,2),padding='valid',activation='elu')(x)
+    #x = GaussianDropout(drate)(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    #x = Conv2DTranspose(256,(1,16),strides=(1,1),padding='valid',activation='relu')(x)
+    x = Conv2DTranspose(4,(1,32),strides=(1,2),padding='valid',activation='elu')(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    #x = Conv2DTranspose(128,(1,32),strides=(1,1),padding='valid',activation='relu')(x)
+    x = Conv2DTranspose(3,(1,64),strides=(1,1),padding='valid',activation='elu')(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
     #x = BatchNormalization()(x)
@@ -96,7 +96,7 @@ def get_generative(G_in, dense_dim=128, drate=0.25, out_dim=50, lr=1e-3):
     #x = Dense(out_dim, activation='relu')(x)
     #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
-    G_out = Dense(out_dim, activation='linear')(x)
+    G_out = Dense(out_dim, activation='tanh')(x)
     #G_out = BatchNormalization()(G_out)
     
     #G_out = Conv2DTranspose(1,(1,out_dim))(x)
@@ -121,22 +121,24 @@ def get_discriminative(D_in, lr=1e-3, drate=.1, n_channels=50, conv_sz=5, leak=.
     x = Dense(n_channels)(x)
     """
 
-
     x = Reshape((-1, 1))(D_in)
     #x = BatchNormalization()(x)
-    x = Conv1D(50, 16, strides=1, padding='valid')(x) # 0.0001
+    x = Conv1D(3, 16, strides=1, padding='valid')(x) # 0.0001
     x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    #x = Conv1D(128, 8, strides=1, padding='valid')(x)
-    #x = LeakyReLU(alpha=0.2)(x)
+    x = Conv1D(64, 16, strides=1, padding='valid')(x)
+    x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    #x = Conv1D(256, 4, strides=1, padding='valid')(x)
-    #x = LeakyReLU(alpha=0.2)(x)
+    x = Conv1D(128, 8, strides=1, padding='valid')(x)
+    x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
-    #x = Conv1D(512, 4, strides=1, padding='valid')(x)
-    #x = LeakyReLU(alpha=0.2)(x)
+    x = Conv1D(256, 8, strides=1, padding='valid')(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    #x = BatchNormalization()(x)
+    x = Conv1D(512, 4, strides=4, padding='valid')(x)
+    x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     x = Flatten()(x)
     #x = BatchNormalization()(x)
@@ -162,29 +164,57 @@ def make_gan(GAN_in, G, D):
     GAN.compile(loss=hyperparams.loss, optimizer=G.optimizer)
     return GAN, GAN_out
 
+def make_autoencoder(noise_dim):
+    """
+    Makes an autoencoder. Output will be used for latent variable
+    input to GAN.
+    """
+    # this is the size of our encoded representations
+    encoding_dim = noise_dim
 
-def sample_data_and_gen(G, xt_train, noise_dim=10, n_samples=10000, noise_samples=100):
+    # this is our input placeholder
+    input_img = Input(shape=(1,50))
+    # "encoded" is the encoded representation of the input
+    encoded = Dense(encoding_dim, activation='relu')(input_img)
+    # "decoded" is the lossy reconstruction of the input
+    decoded = Dense(50, activation='sigmoid')(encoded)
+
+    # this model maps an input to its reconstruction
+    autoencoder = Model(input_img, decoded)
+
+    # this model maps an input to its encoded representation
+    encoder = Model(input_img, encoded)
+
+    # create a placeholder for an encoded (32-dimensional) input
+    encoded_input = Input(shape=(encoding_dim,))
+    # retrieve the last layer of the autoencoder model
+    decoder_layer = autoencoder.layers[-1]
+    # create the decoder model
+    decoder = Model(encoded_input, decoder_layer(encoded_input))
+
+    return autoencoder, encoder, decoder 
+
+def train_autoencoder(autoencoder, x_train):
+    autoencoder.compile(optimizer='adadelta', loss='binary_crossentropy')
+
+    autoencoder.fit(x_train, x_train,
+                epochs=500,
+                batch_size=1,
+                shuffle=True)
+    return autoencoder 
+
+def sample_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise_samples=100):
+    # produce latent variables
+    #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50]) 
+    #XN_noise = encoder.predict(latent_noise)
+
     XT = np.random.normal(0, hyperparams.noise_level, size=[n_samples, hyperparams.outdim])
     XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
-
     XN = G.predict(XN_noise)
-    #xt_train = np.resize(xt_train, (xt_train.shape[0], xt_train.shape[2]))
-    # subtract out generated waveform from signal for each fake gen waveform
-    #plt.close()
-    #plt.plot(XN[0])
-    #plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/prior_train_noise.png')
     for s in range(noise_samples):
         #XN[s] = XN[s] / np.max(XN[s])
         XN[s] =  np.subtract(XN[s], xt_train[0])
         #XN[s] = np.subtract(xt_train[0], XN[s])   
-
-    #plt.close()
-    #plt.plot(XN[0])
-    #plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/train_noise.png')
-    #plt.close()
-    #plt.plot(XT[0])
-    #plt.savefig('/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/train_subtract.png')
-    #plt.close()
 
     X = np.vstack((XT, XN))
     y = np.zeros((n_samples+len(XN_noise), 2))
@@ -192,21 +222,25 @@ def sample_data_and_gen(G, xt_train, noise_dim=10, n_samples=10000, noise_sample
     y[n_samples:, 0] = 1
     return X, y
 
-def pretrain(G, D, xt_train, noise_dim=10, n_samples=10000, noise_samples=10000, batch_size=32):
-    X, y = sample_data_and_gen(G, xt_train, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+def pretrain(G, D, xt_train, encoder, noise_dim=10, n_samples=10000, noise_samples=10000, batch_size=32):
+    X, y = sample_data_and_gen(G, xt_train, encoder, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
     set_trainability(D, True)
 
 
     D.fit(X, y, epochs=1, batch_size=batch_size)
 
 
-def sample_noise(G, xt_train, noise_dim=10, n_samples=10000):
+def sample_noise(G, xt_train, encoder, noise_dim=10, n_samples=10000):
+    # produce latent variables
+    #latent_noise = np.random.normal(0, 1, size=[n_samples, 1, 50])        
+    #X = encoder.predict(latent_noise)
+
     X = np.random.normal(0, 1, size=[n_samples, 1, noise_dim])
     y = np.zeros((n_samples, 2))
     y[:, 1] = 1
     return X, y
 
-def train(GAN, G, D, xt_train, epochs=500, n_samples=10000, noise_samples=hyperparams.noise_samples, noise_dim=10, batch_size=32, verbose=False, v_freq=1):
+def train(GAN, G, D, xt_train, encoder, epochs=500, n_samples=10000, noise_samples=hyperparams.noise_samples, noise_dim=10, batch_size=32, verbose=False, v_freq=1):
     d_loss = []
     g_loss = []
     e_range = range(epochs)
@@ -215,7 +249,7 @@ def train(GAN, G, D, xt_train, epochs=500, n_samples=10000, noise_samples=hyperp
     for epoch in e_range:
 
         # use experience replay
-        
+        """ 
         if epoch == 0:
             X, y = sample_data_and_gen(G, xt_train, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
             X_past, y_past = X, y
@@ -226,24 +260,28 @@ def train(GAN, G, D, xt_train, epochs=500, n_samples=10000, noise_samples=hyperp
             y = np.vstack((y[:int(len(y)/2),:],y_past[int(len(y_past)*(3/4)):,:],y[int(len(y)*(3/4)):,:]))
         else:
             X, y = sample_data_and_gen(G, xt_train, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
-        
+        """
 
-        #X, y = sample_data_and_gen(G, xt_train, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+        X, y = sample_data_and_gen(G, xt_train, encoder, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
 
         # train networks
         set_trainability(D, True)
         d_loss.append(D.train_on_batch(X, y))
 
-        X, y = sample_noise(G, xt_train, n_samples=noise_samples, noise_dim=noise_dim)
+        X, y = sample_noise(G, xt_train, encoder, n_samples=noise_samples, noise_dim=noise_dim)
         set_trainability(D, False)
         g_loss.append(GAN.train_on_batch(X, y))
         if verbose and (epoch + 1) % v_freq == 0:
             print("Epoch #{}: Generative Loss: {}, Discriminative Loss: {}".format(epoch + 1, g_loss[-1], d_loss[-1]))
     return d_loss, g_loss
 
-def test_data_and_gen(G, xt_train, noise_dim=10, n_samples=10000, noise_samples=100):
+def test_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise_samples=100):
+    # produce latent variables
+    #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])        
+    #XN_noise = encoder.predict(latent_noise)
+
     XT = np.random.normal(0, hyperparams.noise_level, size=[n_samples, hyperparams.outdim])
-    XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
+    XN_noise = np.random.normal(0, 10, size=[noise_samples, 1, noise_dim])
 
     XN = G.predict(XN_noise)
     residuals = []
@@ -295,15 +333,21 @@ def main():
     GAN, GAN_out = make_gan(GAN_in, G, D)
     GAN.summary()
 
-    pretrain(G, D, xt_train, n_samples=hyperparams.n_samples, noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size)
+    # make auto XN_noise latent variables
+    #autoencoder, encoder, decoder = make_autoencoder(hyperparams.noise_dim)
+    #auto_xt_train = np.reshape(xt_train, (xt_train.shape[0],1,xt_train.shape[1]))
+    #autoencoder = train_autoencoder(autoencoder, auto_xt_train)
+    encoder = []
+
+    pretrain(G, D, xt_train, encoder, n_samples=hyperparams.n_samples, noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size)
 
 
-    d_loss, g_loss = train(GAN, G, D, xt_train, epochs=hyperparams.epochs, n_samples=hyperparams.n_samples,
+    d_loss, g_loss = train(GAN, G, D, xt_train, encoder, epochs=hyperparams.epochs, n_samples=hyperparams.n_samples,
                            noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size, verbose=True)
 
     # plot several generated waveforms, noise-free signal, signal+noise
     N_VIEWED_SAMPLES = 25
-    data_and_gen, residuals = test_data_and_gen(G, xt_train, noise_samples=N_VIEWED_SAMPLES, n_samples=N_VIEWED_SAMPLES, noise_dim=hyperparams.noise_dim)
+    data_and_gen, residuals = test_data_and_gen(G, xt_train, encoder, noise_samples=N_VIEWED_SAMPLES, n_samples=N_VIEWED_SAMPLES, noise_dim=hyperparams.noise_dim)
     sig = pd.DataFrame(np.transpose(ht_train[0])) #.plot(legend=False, color='cyan')
     #for i in range(data_and_gen[N_VIEWED_SAMPLES:].shape[0]):
     #    data_and_gen[N_VIEWED_SAMPLES:][i] = data_and_gen[N_VIEWED_SAMPLES:][i][::-1]
