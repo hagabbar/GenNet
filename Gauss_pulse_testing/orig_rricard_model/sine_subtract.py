@@ -127,7 +127,7 @@ def get_discriminative(D_in, lr=1e-3, drate=.1, n_channels=50, conv_sz=5, leak=.
     x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    x = Conv1D(64, 8, strides=1, padding='valid')(x)
+    x = Conv1D(128, 8, strides=2, padding='valid')(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
