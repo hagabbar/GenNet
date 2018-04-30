@@ -71,7 +71,7 @@ def get_generative(G_in, dense_dim=128, drate=0.25, out_dim=50, lr=1e-3):
 
     # transpose convolutional network
 
-    x = Reshape((-1,1,1))(G_in)
+    x = Reshape((1,10,1))(G_in)
     #x = BatchNormalization()(x)
     x = Conv2DTranspose(4,(1,4),strides=(1,8),padding='valid',activation='elu')(x) # stride of 8 worked well here.
     #x = BatchNormalization()(x)
@@ -98,7 +98,7 @@ def get_generative(G_in, dense_dim=128, drate=0.25, out_dim=50, lr=1e-3):
     #x = Dropout(drate)(x)
     G_out = Dense(out_dim, activation='tanh')(x)
     #G_out = BatchNormalization()(G_out)
-    
+
     #G_out = Conv2DTranspose(1,(1,out_dim))(x)
     G = Model(G_in, G_out)
     opt = SGD(lr=lr)
@@ -121,23 +121,23 @@ def get_discriminative(D_in, lr=1e-3, drate=.1, n_channels=50, conv_sz=5, leak=.
     x = Dense(n_channels)(x)
     """
 
-    x = Reshape((-1, 1))(D_in)
+    x = Reshape((50, 1))(D_in)
     #x = BatchNormalization()(x)
-    x = Conv1D(3, 16, strides=1, padding='valid')(x) # 0.0001
+    x = Conv1D(3, 8, strides=1, padding='valid')(x) # 0.0001
     x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    x = Conv1D(64, 16, strides=1, padding='valid')(x)
+    x = Conv1D(64, 8, strides=1, padding='valid')(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    x = Conv1D(128, 8, strides=1, padding='valid')(x)
+    x = Conv1D(128, 2, strides=1, padding='valid')(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
-    x = Conv1D(256, 8, strides=1, padding='valid')(x)
+    x = Conv1D(256, 1, strides=1, padding='valid')(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
-    x = Conv1D(512, 4, strides=4, padding='valid')(x)
+    x = Conv1D(512, 1, strides=2, padding='valid')(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     x = Flatten()(x)
@@ -192,7 +192,7 @@ def make_autoencoder(noise_dim):
     # create the decoder model
     decoder = Model(encoded_input, decoder_layer(encoded_input))
 
-    return autoencoder, encoder, decoder 
+    return autoencoder, encoder, decoder
 
 def train_autoencoder(autoencoder, x_train):
     autoencoder.compile(optimizer='adadelta', loss='binary_crossentropy')
@@ -201,11 +201,11 @@ def train_autoencoder(autoencoder, x_train):
                 epochs=500,
                 batch_size=1,
                 shuffle=True)
-    return autoencoder 
+    return autoencoder
 
 def sample_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise_samples=100):
     # produce latent variables
-    #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50]) 
+    #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])
     #XN_noise = encoder.predict(latent_noise)
 
     XT = np.random.normal(0, hyperparams.noise_level, size=[n_samples, hyperparams.outdim])
@@ -214,7 +214,7 @@ def sample_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noi
     for s in range(noise_samples):
         #XN[s] = XN[s] / np.max(XN[s])
         XN[s] =  np.subtract(XN[s], xt_train[0])
-        #XN[s] = np.subtract(xt_train[0], XN[s])   
+        #XN[s] = np.subtract(xt_train[0], XN[s])
 
     X = np.vstack((XT, XN))
     y = np.zeros((n_samples+len(XN_noise), 2))
@@ -232,7 +232,7 @@ def pretrain(G, D, xt_train, encoder, noise_dim=10, n_samples=10000, noise_sampl
 
 def sample_noise(G, xt_train, encoder, noise_dim=10, n_samples=10000):
     # produce latent variables
-    #latent_noise = np.random.normal(0, 1, size=[n_samples, 1, 50])        
+    #latent_noise = np.random.normal(0, 1, size=[n_samples, 1, 50])
     #X = encoder.predict(latent_noise)
 
     X = np.random.normal(0, 1, size=[n_samples, 1, noise_dim])
@@ -249,7 +249,7 @@ def train(GAN, G, D, xt_train, encoder, epochs=500, n_samples=10000, noise_sampl
     for epoch in e_range:
 
         # use experience replay
-        """ 
+        """
         if epoch == 0:
             X, y = sample_data_and_gen(G, xt_train, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
             X_past, y_past = X, y
@@ -277,7 +277,7 @@ def train(GAN, G, D, xt_train, encoder, epochs=500, n_samples=10000, noise_sampl
 
 def test_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise_samples=100):
     # produce latent variables
-    #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])        
+    #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])
     #XN_noise = encoder.predict(latent_noise)
 
     XT = np.random.normal(0, hyperparams.noise_level, size=[n_samples, hyperparams.outdim])
@@ -301,7 +301,7 @@ def test_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise
     return X, residuals
 
 def main():
-    outdir = '/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/'
+    outdir = 'output/'
 
     #ht_train = sample_data(hyperparams.n_samples)
     ht_train = sample_data(1)
@@ -311,13 +311,13 @@ def main():
     f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey=True)
 
     ax = pd.DataFrame(np.transpose(ht_train[0]))
-    ax1.plot(ax, color='cyan')
+    ax1.plot(ax, color='cyan', linewidth=0.5)
     ax1.set_title('signal + (sig+noise)')
     #ax1 = ax1.get_figure()
     #ax.savefig('%sinput_waveforms.png' % outdir)
     #plt.close(ax)
 
-    ax1.plot(xt_train[0], color='green', alpha=0.5)
+    ax1.plot(xt_train[0], color='green', alpha=0.5, linewidth=0.5)
     #plt.savefig('%sinput_waveforms_plusnoise.png' % outdir)
     #plt.close(ax)
 
@@ -351,29 +351,29 @@ def main():
     sig = pd.DataFrame(np.transpose(ht_train[0])) #.plot(legend=False, color='cyan')
     #for i in range(data_and_gen[N_VIEWED_SAMPLES:].shape[0]):
     #    data_and_gen[N_VIEWED_SAMPLES:][i] = data_and_gen[N_VIEWED_SAMPLES:][i][::-1]
-   
+
     gen_sig = pd.DataFrame(np.transpose(data_and_gen[N_VIEWED_SAMPLES:])) #.plot(legend=False, color='blue', alpha=0.25, ax=sig)
-    ax3.plot(sig, color='cyan')
-    ax3.plot(gen_sig, color='blue', alpha=0.25)
-    ax3.plot(xt_train[0], color='green')
+    ax3.plot(sig, color='cyan', linewidth=0.5)
+    ax3.plot(gen_sig, color='blue', alpha=0.25, linewidth=0.5)
+    ax3.plot(xt_train[0], color='green', linewidth=0.5)
     ax3.set_title('gen + sig + (sig+noise)')
     #ax = ax.get_figure()
     #plt.savefig('%sgen_waveform.png' % outdir)
     #plt.close(ax)
 
     # plot all noise training samples
-    ax2.plot(np.transpose(data_and_gen[:N_VIEWED_SAMPLES]), alpha=0.25, color='blue')
+    ax2.plot(np.transpose(data_and_gen[:N_VIEWED_SAMPLES]), alpha=0.25, color='blue', linewidth=0.5)
     ax2.set_title('Noise Samples')
 
     # plot residuals. signal+noise - generated
     residuals = np.resize(residuals, (residuals.shape[0], residuals.shape[2]))
-    ax4.plot(np.transpose(residuals), color='red', alpha=0.25)
+    ax4.plot(np.transpose(residuals), color='red', alpha=0.25, linewidth=0.5)
     ax4.set_title('Residuals')
 
     plt.savefig('%swaveform_results.png' % outdir, dpi=900)
     plt.close()
 
-    
+
     # plot loss functions
     ax = pd.DataFrame(
         {
@@ -387,7 +387,7 @@ def main():
     ax = ax.get_figure()
     ax.savefig('%sloss.png' % outdir)
     plt.close(ax)
-    
+
 
     """
     # Check whether output distribution is similar to input training set
