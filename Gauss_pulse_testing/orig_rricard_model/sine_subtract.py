@@ -20,7 +20,7 @@ from keras.layers import Input, Reshape, Conv2DTranspose, GaussianDropout
 from keras.layers.core import Dense, Activation, Dropout, Flatten
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling1D, Conv1D
-from keras.layers.advanced_activations import LeakyReLU
+from keras.layers.advanced_activations import LeakyReLU, PReLU
 from keras.optimizers import Adam, SGD
 from keras.callbacks import TensorBoard
 from scipy import signal
@@ -70,24 +70,25 @@ def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi,
 def get_generative(G_in, dense_dim=128, drate=0.25, out_dim=50, lr=1e-3):
 
     # transpose convolutional network
+    act='tanh'
 
     x = Reshape((1,10,1))(G_in)
     #x = BatchNormalization()(x)
-    x = Conv2DTranspose(4,(1,4),strides=(1,8),padding='valid',activation='elu')(x) # stride of 8 worked well here.
+    x = Conv2DTranspose(512,(1,1),strides=(1,1),padding='valid',activation=act)(x) # stride of 8 worked well here.
     #x = BatchNormalization()(x)
     # kernel_regularizer=regularizers.l2(0.01)
-    x = GaussianDropout(drate)(x)
-    x = Conv2DTranspose(4,(1,8),strides=(1,2),padding='valid',activation='elu')(x)
+    #x = GaussianDropout(drate)(x)
+    x = Conv2DTranspose(256,(1,1),strides=(1,1),padding='valid',activation=act)(x)
     #x = GaussianDropout(drate)(x)
     #x = BatchNormalization()(x)
-    x = Conv2DTranspose(4,(1,16),strides=(1,2),padding='valid',activation='elu')(x)
+    x = Conv2DTranspose(128,(1,2),strides=(1,1),padding='valid',activation=act)(x)
     #x = GaussianDropout(drate)(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    x = Conv2DTranspose(4,(1,32),strides=(1,2),padding='valid',activation='elu')(x)
+    x = Conv2DTranspose(64,(1,8),strides=(1,1),padding='valid',activation=act)(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    x = Conv2DTranspose(3,(1,64),strides=(1,1),padding='valid',activation='elu')(x)
+    x = Conv2DTranspose(32,(1,8),strides=(1,1),padding='valid',activation=act)(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
     #x = BatchNormalization()(x)
@@ -120,25 +121,32 @@ def get_discriminative(D_in, lr=1e-3, drate=.1, n_channels=50, conv_sz=5, leak=.
     x = Flatten()(x)
     x = Dense(n_channels)(x)
     """
+    act='linear'
+    alpha = 0.4
 
     x = Reshape((50, 1))(D_in)
     #x = BatchNormalization()(x)
-    x = Conv1D(3, 8, strides=1, padding='valid')(x) # 0.0001
-    x = LeakyReLU(alpha=0.2)(x)
+    x = Conv1D(64, 8, strides=1, padding='valid', activation=act)(x) # 0.0001
+    x = LeakyReLU(alpha=alpha)(x)
+    #x = PReLU()(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    x = Conv1D(128, 8, strides=2, padding='valid')(x)
-    x = LeakyReLU(alpha=0.2)(x)
+    x = Conv1D(128, 8, strides=1, padding='valid', activation=act)(x)
+    x = LeakyReLU(alpha=alpha)(x)
+    #x = PReLU()(x)
     #x = BatchNormalization()(x)
     #x = GaussianDropout(drate)(x)
-    x = Conv1D(128, 2, strides=1, padding='valid')(x)
-    x = LeakyReLU(alpha=0.2)(x)
+    x = Conv1D(128, 2, strides=1, padding='valid', activation=act)(x)
+    x = LeakyReLU(alpha=alpha)(x)
+    #x = PReLU()(x)
     #x = BatchNormalization()(x)
-    x = Conv1D(256, 1, strides=1, padding='valid')(x)
-    x = LeakyReLU(alpha=0.2)(x)
+    x = Conv1D(256, 1, strides=1, padding='valid', activation=act)(x)
+    x = LeakyReLU(alpha=alpha)(x)
+    #x = PReLU()(x)
     #x = BatchNormalization()(x)
-    x = Conv1D(512, 1, strides=2, padding='valid')(x)
-    x = LeakyReLU(alpha=0.2)(x)
+    x = Conv1D(512, 1, strides=1, padding='valid', activation=act)(x)
+    x = LeakyReLU(alpha=alpha)(x)
+    #x = PReLU()(x)
     #x = BatchNormalization()(x)
     x = Flatten()(x)
     #x = BatchNormalization()(x)
