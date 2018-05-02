@@ -142,7 +142,7 @@ def get_discriminative(D_in, lr=1e-3, drate=.6, n_channels=50, conv_sz=5, leak=.
     x = Flatten()(x)
     x = Dense(n_channels)(x)
     """
-    act='linear'
+    act='tanh'
     alpha = 0.2
     padding='same'
     depth = 64
@@ -156,6 +156,7 @@ def get_discriminative(D_in, lr=1e-3, drate=.6, n_channels=50, conv_sz=5, leak=.
     #x = PReLU()(x)
     x = Dropout(drate)(x)
 
+    """
     x = Conv1D(depth*2, 5, strides=2, padding=padding)(x)
     x = BatchNormalization(momentum=0.9)(x)
     #x = Activation(act)(x)
@@ -163,7 +164,7 @@ def get_discriminative(D_in, lr=1e-3, drate=.6, n_channels=50, conv_sz=5, leak=.
     #x = PReLU()(x)
     x = Dropout(drate)(x)
     #x = BatchNormalization()(x)
-
+    
     x = Conv1D(depth*4, 5, strides=2, padding=padding)(x)
     x = BatchNormalization(momentum=0.9)(x)
     #x = Activation(act)(x)
@@ -171,7 +172,7 @@ def get_discriminative(D_in, lr=1e-3, drate=.6, n_channels=50, conv_sz=5, leak=.
     x = LeakyReLU(alpha=alpha)(x)
     x = Dropout(drate)(x)
     #x = BatchNormalization()(x)
-
+    
     x = Conv1D(depth*8, 5, strides=1, padding=padding)(x)
     x = BatchNormalization(momentum=0.9)(x)
     #x = Activation(act)(x)
@@ -186,13 +187,16 @@ def get_discriminative(D_in, lr=1e-3, drate=.6, n_channels=50, conv_sz=5, leak=.
     #x = GaussianDropout(drate)(x)
     #x = PReLU()(x)
     #x = BatchNormalization()(x)
-
+    """
     x = Flatten()(x)
     #x = BatchNormalization()(x)
     x = Dense(50)(x)
     x = Activation('tanh')(x)
     #x = LeakyReLU(alpha=alpha)(x)
     #x = BatchNormalization()(x)
+    
+    #x = Flatten()(x)
+
     D_out = Dense(2, activation='sigmoid')(x)
     #D_out = BatchNormalization()(D_out) # may have to add this in later.
     D = Model(D_in, D_out)
@@ -265,10 +269,10 @@ def sample_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noi
     XN = G.predict(XN_noise)
     for s in range(noise_samples):
         #XN[s] = XN[s] / np.max(XN[s])
-        XN[s] =  np.subtract(XN[s], xt_train[0])
+        XN[s] =  np.subtract(XN[s], xt_train[0] / np.max(xt_train[0]))
         #XN[s] = np.subtract(xt_train[0], XN[s])
 
-    X = np.vstack((XT, XN))
+    X = np.vstack((XT/np.max(XT), XN/np.max(XN)))
     y = np.zeros((n_samples+len(XN_noise), 2))
     y[:n_samples, 1] = 1
     y[n_samples:, 0] = 1
@@ -288,6 +292,7 @@ def sample_noise(G, xt_train, encoder, noise_dim=10, n_samples=10000):
     #X = encoder.predict(latent_noise)
 
     X = np.random.normal(0, 1, size=[n_samples, 1, noise_dim])
+    X = X / np.max(X)
     y = np.zeros((n_samples, 2))
     y[:, 1] = 1
     return X, y
@@ -338,7 +343,7 @@ def test_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise
     XT = np.random.normal(0, hyperparams.noise_level, size=[n_samples, hyperparams.outdim])
     XN_noise = np.random.normal(0, 10, size=[noise_samples, 1, noise_dim])
 
-    XN = G.predict(XN_noise)
+    XN = G.predict(XN_noise / np.max(XN_noise))
     residuals = []
     for s in range(noise_samples):
         #XN[s] = XN[s] / np.max(XN[s])
@@ -357,7 +362,7 @@ def test_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise
     return X, residuals
 
 def main():
-    outdir = 'output/'
+    outdir = '/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/'
 
     #ht_train = sample_data(hyperparams.n_samples)
     ht_train = sample_data(1)
@@ -396,7 +401,7 @@ def main():
     #autoencoder = train_autoencoder(autoencoder, auto_xt_train)
     encoder = []
 
-    #pretrain(G, D, xt_train, encoder, n_samples=hyperparams.n_samples, noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size)
+    pretrain(G, D, xt_train, encoder, n_samples=hyperparams.n_samples, noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size)
 
 
     d_loss, g_loss = train(GAN, G, D, xt_train, encoder, epochs=hyperparams.epochs, n_samples=hyperparams.n_samples,
