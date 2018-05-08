@@ -37,14 +37,14 @@ g_lr = 40e-4 #2e-4
 d_lr = 40e-4 #6e-4
 
 
-def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi, mul_range=[1, 2]):
+def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi, mul_range=[1, 2], snr=5):
     vectors = []
     for i in range(n_samples):
         offset = np.random.random() * max_offset
         #mul = mul_range[0] + np.random.random() * (mul_range[1] - mul_range[0])
         mul = (2 * np.pi) / 5 
         vectors.append(
-            np.sin(offset + x_vals * mul)
+            np.sin(offset + x_vals * mul) * snr
         )
     return np.array(vectors)
 
@@ -96,7 +96,7 @@ def get_generative(G_in, dense_dim=128, drate=0.1, out_dim=50, lr=1e-3):
     x = Dense(out_dim, activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
-    G_out = Dense(out_dim, activation='tanh')(x)
+    G_out = Dense(out_dim, activation='linear')(x)
     #G_out = Conv2DTranspose(1,(1,out_dim))(x)
     G = Model(G_in, G_out)
     opt = SGD(lr=lr)
@@ -181,7 +181,7 @@ GAN.summary()
 
 def sample_data_and_gen(G, noise_dim=10, n_samples=10000, noise_samples=100):
     XT = sample_data(n_samples=n_samples)
-    XN_noise = np.random.uniform(-1, 1, size=[noise_samples, 1, noise_dim])
+    XN_noise = np.random.uniform(-5, 5, size=[noise_samples, 1, noise_dim])
     XT = np.resize(XT, (XT.shape[0],1,XT.shape[1]))
 
     XN = G.predict(XN_noise)
@@ -205,7 +205,7 @@ pretrain(G, D, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise
 
 
 def sample_noise(G, noise_dim=10, n_samples=10000):
-    X = np.random.uniform(-1, 1, size=[n_samples, 1, noise_dim])
+    X = np.random.uniform(-5, 5, size=[n_samples, 1, noise_dim])
     y = np.zeros((n_samples, 2))
     y[:, 1] = 1
     return X, y

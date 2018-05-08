@@ -32,7 +32,7 @@ n_samples = int(n_total*0.5)
 noise_samples = int(n_total*0.5)
 noise_dim = 1
 batch_size = 16
-epochs = 1000
+epochs = 2500
 g_lr = 40e-4 #2e-4
 d_lr = 40e-4 #6e-4
 nstd = 1
@@ -60,7 +60,7 @@ plt.close(ax)
 # In[4]:
 
 
-def get_generative(G_in, dense_dim=128, drate=0.1, out_dim=50, lr=1e-3):
+def get_generative(G_in, dense_dim=128, drate=0.6, out_dim=50, lr=1e-3):
     # original network
     """
     x = Dense(512, activation='relu')(G_in)
@@ -83,24 +83,31 @@ def get_generative(G_in, dense_dim=128, drate=0.1, out_dim=50, lr=1e-3):
     x = Conv2DTranspose(128,(1,4),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
+
     x = Conv2DTranspose(64,(1,8),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
+
     x = Conv2DTranspose(32,(1,16),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
+
     x = Conv2DTranspose(16,(1,32),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
+
     x = Flatten()(x)
     x = BatchNormalization()(x)
+
     x = Dense(out_dim, activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
+
     G_out = Dense(out_dim, activation='linear')(x)
     #G_out = Conv2DTranspose(1,(1,out_dim))(x)
     G = Model(G_in, G_out)
-    opt = SGD(lr=lr)
+    #opt = SGD(lr=lr)
+    opt = Adam(lr=lr, beta_1=0.5)
     G.compile(loss='binary_crossentropy', optimizer=opt)
     
 
@@ -114,7 +121,7 @@ G.summary()
 # In[3]:
 
 
-def get_discriminative(D_in, lr=1e-3, drate=.25, n_channels=50, conv_sz=5, leak=.2):
+def get_discriminative(D_in, lr=1e-3, drate=.6, n_channels=50, conv_sz=5, leak=.2):
     # old network
     
     """
@@ -143,8 +150,11 @@ def get_discriminative(D_in, lr=1e-3, drate=.25, n_channels=50, conv_sz=5, leak=
     #x = BatchNormalization()(x)
     
     x = Flatten()(x)
-    x = Dense(n_channels)(x)
+    #x = BatchNormalization()(x)
+    x = Dense(n_channels, activation='tanh')(x)
+    #x = BatchNormalization()(x)
     D_out = Dense(2, activation='sigmoid')(x)
+    #D_out = BatchNormalization()(D_out)
     D = Model(D_in, D_out)
     dopt = Adam(lr=lr, beta_1=0.5)
     D.compile(loss='binary_crossentropy', optimizer=dopt)
@@ -187,7 +197,7 @@ def sample_data_and_gen(G, noise_dim=10, n_samples=10000, noise_samples=100):
     XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
     #XT = np.resize(XT, (XT.shape[0],1,XT.shape[1]))
 
-    XN = G.predict(XN_noise)
+    XN = G.predict(XN_noise / np.max(XN_noise))
     XT = np.resize(XT, (XT.shape[0],XT.shape[2]))
     X = np.vstack((XT, XN))
     y = np.zeros((n_samples+len(XN_noise), 2))

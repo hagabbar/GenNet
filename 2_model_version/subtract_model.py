@@ -47,21 +47,21 @@ hyperparams.noise_dim = 1
 hyperparams.noise_samples = int(hyperparams.n_total*0.5)
 hyperparams.batch_size = 16
 hyperparams.epochs = 800
-hyperparams.g_lr = 4e-3 #4e-3
-hyperparams.d_lr = 1e-2#4e-6
+hyperparams.g_lr = 4e-4 #4e-3
+hyperparams.d_lr = 4e-4#1e-2
 hyperparams.loss = 'binary_crossentropy'
-hyperparams.noise_level = 0.25
+hyperparams.snr = 5
 hyperparams.outdim = 50
 
 
-def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi, mul_range=[1, 2]):
+def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi, mul_range=[1, 2], snr=hyperparams.snr):
     vectors = []
     for i in range(n_samples):
         offset = np.random.random() * max_offset
         #mul = mul_range[0] + np.random.random() * (mul_range[1] - mul_range[0])
         mul = (2 * np.pi) / 5
         vectors.append(
-            np.sin(offset + x_vals * mul)
+            np.sin(offset + x_vals * mul) * snr
         )
     return np.array(vectors)
 
@@ -84,7 +84,7 @@ def sample_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noi
     #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])
     #XN_noise = encoder.predict(latent_noise)
 
-    XT = np.random.normal(0, hyperparams.noise_level, size=[n_samples, hyperparams.outdim])
+    XT = np.random.normal(0, 1, size=[n_samples, hyperparams.outdim])
     XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
     XN = G.predict(XN_noise)
     for s in range(noise_samples):
@@ -159,7 +159,7 @@ def test_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise
     #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])
     #XN_noise = encoder.predict(latent_noise)
 
-    XT = np.random.normal(0, hyperparams.noise_level, size=[n_samples, hyperparams.outdim])
+    XT = np.random.normal(0, 1, size=[n_samples, hyperparams.outdim])
     XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
 
     XN = G.predict(XN_noise)
@@ -203,31 +203,31 @@ def get_generative(G_in, dense_dim=128, drate=0.3, out_dim=50, lr=1e-3):
     x = BatchNormalization()(x)
     x = Conv2DTranspose(128,(1,4),strides=(1,1),padding='valid',activation=act)(x)
     x = BatchNormalization()(x)
-    x = Dropout(drate)(x)
+    #x = Dropout(drate)(x)
 
     x = Conv2DTranspose(64,(1,8),strides=(1,1),padding='valid',activation=act)(x)
     x = BatchNormalization()(x)
-    x = Dropout(drate)(x)
+    #x = Dropout(drate)(x)
 
     x = Conv2DTranspose(32,(1,16),strides=(1,1),padding='valid',activation=act)(x)
     x = BatchNormalization()(x)
-    x = Dropout(drate)(x)
+    #x = Dropout(drate)(x)
 
     x = Conv2DTranspose(16,(1,32),strides=(1,1),padding='valid',activation=act)(x)
     x = BatchNormalization()(x)
-    x = Dropout(drate)(x)
+    #x = Dropout(drate)(x)
 
     x = Flatten()(x)
     x = BatchNormalization()(x)
 
     x = Dense(out_dim, activation=act)(x)
     x = BatchNormalization()(x)
-    #x = Dropout(drate)(x)
 
-    G_out = Dense(out_dim, activation='tanh')(x)
+    G_out = Dense(out_dim, activation='linear')(x)
     #G_out = Conv2DTranspose(1,(1,out_dim))(x)
     G = Model(G_in, G_out)
-    opt = SGD(lr=lr)
+    #opt = SGD(lr=lr)
+    opt = Adam(lr=lr, beta_1=0.5)
     G.compile(loss='binary_crossentropy', optimizer=opt)
 
 
@@ -251,6 +251,7 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
     x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     x = Dropout(drate)(x)
+    
     #x = Conv1D(128, 8)(x)
     #x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
@@ -275,9 +276,17 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
 def main():
     outdir = '/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/'
 
+    # print out input waveforms
+    ax = pd.DataFrame(np.transpose(sample_data(25))).plot(legend=False)
+    ax = ax.get_figure()
+    plt.xlabel('Time')
+    plt.ylabel('Amplitude')
+    ax.savefig('%sinput_waveforms.png' % outdir)
+    plt.close(ax)
+
     #ht_train = sample_data(hyperparams.n_samples)
     ht_train = sample_data(1)
-    xt_train = ht_train + np.random.normal(0, hyperparams.noise_level, size=[1, ht_train.shape[1]])
+    xt_train = ht_train + np.random.normal(0, 1, size=[1, ht_train.shape[1]])
 
     # initialize subplot figure
     f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey=True)
