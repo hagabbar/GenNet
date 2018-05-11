@@ -15,10 +15,10 @@ from tqdm import tqdm_notebook as tqdm
 import keras
 from keras import regularizers
 from keras.models import Model
-from keras.layers import Input, Reshape, Conv2DTranspose, GaussianDropout, Activation
+from keras.layers import Input, Reshape, Conv2DTranspose, GaussianDropout, Activation, GaussianNoise, GlobalAveragePooling2D, GlobalMaxPooling2D, GlobalMaxPooling1D
 from keras.layers.core import Dense, Dropout, Flatten
 from keras.layers.normalization import BatchNormalization
-from keras.layers.convolutional import UpSampling1D, Conv1D, UpSampling2D
+from keras.layers.convolutional import UpSampling1D, Conv1D, UpSampling2D, Conv2D
 from keras.layers.advanced_activations import LeakyReLU, PReLU
 from keras.optimizers import Adam, SGD, RMSprop
 from keras.callbacks import TensorBoard
@@ -41,14 +41,14 @@ class hyperparams():
         self.noise_level = noise_level
 
 # set hyperparamters
-hyperparams.n_total = 500
+hyperparams.n_total = 50
 hyperparams.n_samples = int(hyperparams.n_total*0.5)
-hyperparams.noise_dim = 1
+hyperparams.noise_dim = 10
 hyperparams.noise_samples = int(hyperparams.n_total*0.5)
-hyperparams.batch_size = 16
-hyperparams.epochs = 500
-hyperparams.g_lr = 1e-4 #4e-3
-hyperparams.d_lr = 1e-4#1e-2
+hyperparams.batch_size = 12
+hyperparams.epochs = 750
+hyperparams.g_lr = 2e-3 #4e-3
+hyperparams.d_lr = 2e-3#1e-2
 hyperparams.loss = 'binary_crossentropy'
 hyperparams.snr = 5
 hyperparams.outdim = 50
@@ -84,18 +84,28 @@ def sample_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noi
     #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])
     #XN_noise = encoder.predict(latent_noise)
 
-    XT = np.random.normal(0, 1, size=[n_samples, hyperparams.outdim])
+    XT = np.random.normal(0, hyperparams.snr, size=[n_samples, hyperparams.outdim])
     XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
     XN = G.predict(XN_noise)
     for s in range(noise_samples):
         #XN[s] = XN[s] / np.max(XN[s])
-        #XN[s] =  np.subtract(XN[s], xt_train[0])
-        XN[s] = np.subtract(xt_train[0], XN[s])
+        XN[s] =  np.subtract(XN[s], xt_train[0])
+        #XN[s] = np.subtract(xt_train[0], XN[s])
 
     X = np.vstack((XT, XN))
-    y = np.ones((n_samples+len(XN_noise), 2))
-    y[:n_samples, 1] = 1
-    y[n_samples:, 0] = 1
+    y = np.zeros((n_samples+len(XN_noise), 2))
+
+    # set true labels
+    y[:n_samples, 0] = np.random.uniform(0.9,1)
+    y[n_samples:, 1] = np.random.uniform(0.9,1)
+
+    # set false labels
+    y[:n_samples, 1] = np.random.uniform(0,0.1)
+    y[n_samples:, 0] = np.random.uniform(0,0.1)
+
+    # randomly change labels
+    
+
     return X, y
 
 def pretrain(G, D, xt_train, encoder, noise_dim=10, n_samples=10000, noise_samples=10000, batch_size=32):
@@ -112,8 +122,9 @@ def sample_noise(G, xt_train, encoder, noise_dim=10, n_samples=10000):
     #X = encoder.predict(latent_noise)
 
     X = np.random.normal(0, 1, size=[n_samples, 1, noise_dim])
-    y = np.ones((n_samples, 2))
-    y[:, 1] = 1
+    y = np.zeros((n_samples, 2))
+    y[:, 0] = 1 #np.random.uniform(0.9,1)
+    y[:, 1] = 0 #np.random.uniform(0,0.1)
     return X, y
 
 def train(GAN, G, D, xt_train, encoder, epochs=500, n_samples=10000, noise_samples=hyperparams.noise_samples, noise_dim=10, batch_size=32, verbose=False, v_freq=1):
@@ -175,7 +186,7 @@ def test_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise
     #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])
     #XN_noise = encoder.predict(latent_noise)
 
-    XT = np.random.normal(0, 1, size=[n_samples, hyperparams.outdim])
+    XT = np.random.normal(0, hyperparams.snr, size=[n_samples, hyperparams.outdim])
     XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
 
     XN = G.predict(XN_noise)
@@ -196,7 +207,7 @@ def test_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise
     y[n_samples:, 0] = 1
     return X, residuals
 
-def get_generative(G_in, dense_dim=128, drate=0.1, out_dim=50, lr=1e-3):
+def get_generative(G_in, dense_dim=128, drate=0.5, out_dim=50, lr=1e-3):
     # original network
     """
     x = Dense(512, activation='relu')(G_in)
@@ -213,31 +224,41 @@ def get_generative(G_in, dense_dim=128, drate=0.1, out_dim=50, lr=1e-3):
     """
 
     # transpose convolutional network
-    act = 'elu'
+    act = 'tanh'
 
     x = Reshape((-1,1,1))(G_in)
-    x = BatchNormalization()(x)
-    x = Conv2DTranspose(128,(1,4), activity_regularizer=regularizers.l1(0.001), kernel_regularizer=regularizers.l2(0.01), strides=(1,1),padding='valid',activation=act)(x)
-    x = BatchNormalization()(x)
+    #x = BatchNormalization(momentum=0.99)(x)
+    #x = Conv2DTranspose(128,(1,4), activity_regularizer=regularizers.l1(0.01), kernel_regularizer=regularizers.l2(0.01), strides=(1,1),padding='valid',activation=act)(x)
+    #x = Conv2DTranspose(64,(1,128), strides=(1,2), dilation_rate=(1,1), padding='valid',activation=act)(x)
+    #x = GaussianNoise(1)(x)
+    #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
 
-    x = Conv2DTranspose(64,(1,8),strides=(1,1),padding='valid',activation=act)(x)
-    x = BatchNormalization()(x)
+    x = Conv2DTranspose(50,(1,8),strides=(1,1), dilation_rate=(1,1), padding='valid',activation=act)(x)
+    #x = GaussianNoise(1)(x)
+    #x = BatchNormalization(momentum=0.99)(x)
     #x = Dropout(drate)(x)
 
-    x = Conv2DTranspose(32,(1,16),strides=(1,1),padding='valid',activation=act)(x)
-    x = BatchNormalization()(x)
+    x = Conv2DTranspose(50,(1,5),strides=(1,1), dilation_rate=(1,1), padding='valid',activation=act)(x)
+    #x = GaussianNoise(1)(x)
+    #x = BatchNormalization(momentum=0.99)(x)
+    #x = Conv2D(128, (1,32), activation=act)(x)
+    #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
 
-    x = Conv2DTranspose(16,(1,32),strides=(1,1),padding='valid',activation=act)(x)
-    x = BatchNormalization()(x)
+    x = Conv2DTranspose(50,(1,5),strides=(1,1),padding='valid',activation=act)(x)
+    #x = GaussianNoise(1)(x)
+    #x = BatchNormalization(momentum=0.99)(x)
     #x = Dropout(drate)(x)
 
-    x = Flatten()(x)
-    x = BatchNormalization()(x)
+    #x = GlobalAveragePooling2D()(x)
+    x = GlobalMaxPooling2D()(x)
+    #x = Flatten()(x)
+    #x = BatchNormalization(momentum=0.99)(x)
 
-    x = Dense(out_dim, activation=act)(x)
-    x = BatchNormalization()(x)
+    #x = Dense(256, activation='tanh')(x)
+    #x = GaussianNoise(1)(x)
+    #x = BatchNormalization()(x)
 
     G_out = Dense(out_dim, activation='linear')(x)
     #G_out = Conv2DTranspose(1,(1,out_dim))(x)
@@ -263,27 +284,39 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
 
 
     x = Reshape((-1, 1))(D_in)
-    x = Conv1D(50, 16)(x)
+    #x = Conv1D(128, 8, activity_regularizer=regularizers.l1(0.0001), kernel_regularizer=regularizers.l2(0.01))(x)
+    x = Conv1D(128, 8)(x)
     x = LeakyReLU(alpha=0.2)(x)
-    #x = BatchNormalization()(x)
-    x = Dropout(drate)(x)
+    #x = GaussianNoise(2)(x)
+    #x = BatchNormalization(momentum=0.99)(x)
+    #x = Dropout(drate)(x)
     
     x = Conv1D(128, 8)(x)
     x = LeakyReLU(alpha=0.2)(x)
+    #x = GaussianNoise(2)(x)
     #x = BatchNormalization()(x)
-    #x = Conv1D(256, 4)(x)
-    #x = LeakyReLU(alpha=0.2)(x)
-    #x = BatchNormalization()(x)
-    #x = Conv1D(512, 4)(x)
-    #x = LeakyReLU(alpha=0.2)(x)
+    
+    x = Conv1D(128, 8)(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    #x = GaussianNoise(2)(x)
     #x = BatchNormalization()(x)
 
-    x = Flatten()(x)
+    #x = Conv1D(128, 8)(x)
+    #x = LeakyReLU(alpha=0.2)(x)
+    #x = GaussianNoise(2)(x)
+    #x = BatchNormalization()(x)
+    
+    #x = Flatten()(x)
+    x = GlobalMaxPooling1D()(x)
+    #x = BatchNormalization()(x)
 
-    x = Dense(n_channels)(x)
-    x = Dropout(drate)(x)
+    #x = Dense(n_channels)(x)
+    #x = LeakyReLU(alpha=0.2)(x)
+    #x = BatchNormalization(momentum=0.99)(x)
+    #x = Dropout(drate)(x)
 
     D_out = Dense(2, activation='sigmoid')(x)
+    #D_out = BatchNormalization()(D_out) 
     D = Model(D_in, D_out)
     dopt = Adam(lr=lr, beta_1=0.5)
     D.compile(loss='binary_crossentropy', optimizer=dopt)
@@ -302,7 +335,7 @@ def main():
 
     #ht_train = sample_data(hyperparams.n_samples)
     ht_train = sample_data(1)
-    xt_train = ht_train + np.random.normal(0, 1, size=[1, ht_train.shape[1]])
+    xt_train = ht_train + np.random.normal(0, hyperparams.snr, size=[1, ht_train.shape[1]])
 
     # initialize subplot figure
     f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey=True)
@@ -322,7 +355,7 @@ def main():
     #G = keras.models.load_model('g_model.hdf5')
     G_in = Input(shape=(1,hyperparams.noise_dim))
     G, G_out = get_generative(G_in, lr=hyperparams.g_lr)
-    G.load_weights('best_g_weights.hdf5')
+    #G.load_weights('best_g_weights.hdf5')
     G.summary()
 
     #D = keras.models.load_model('d_model.hdf5')
