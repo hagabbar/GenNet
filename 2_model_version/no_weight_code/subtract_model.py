@@ -15,7 +15,7 @@ from tqdm import tqdm_notebook as tqdm
 import keras
 from keras import regularizers
 from keras.models import Model
-from keras.layers import Input, Reshape, Conv2DTranspose, GaussianDropout, Activation, GaussianNoise, GlobalAveragePooling2D, GlobalMaxPooling2D, GlobalMaxPooling1D
+from keras.layers import Input, Reshape, Conv2DTranspose, GaussianDropout, Activation, GaussianNoise, GlobalAveragePooling2D, GlobalAveragePooling1D, GlobalMaxPooling2D, GlobalMaxPooling1D
 from keras.layers.core import Dense, Dropout, Flatten
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling1D, Conv1D, UpSampling2D, Conv2D
@@ -45,10 +45,10 @@ hyperparams.n_total = 50
 hyperparams.n_samples = int(hyperparams.n_total*0.5)
 hyperparams.noise_dim = 10
 hyperparams.noise_samples = int(hyperparams.n_total*0.5)
-hyperparams.batch_size = 12
-hyperparams.epochs = 750
-hyperparams.g_lr = 2e-3 #4e-3
-hyperparams.d_lr = 2e-3#1e-2
+hyperparams.batch_size = 16
+hyperparams.epochs = 1000
+hyperparams.g_lr = 2e-4 #4e-3
+hyperparams.d_lr = 2e-4#1e-2
 hyperparams.loss = 'binary_crossentropy'
 hyperparams.snr = 5
 hyperparams.outdim = 50
@@ -252,7 +252,7 @@ def get_generative(G_in, dense_dim=128, drate=0.5, out_dim=50, lr=1e-3):
     #x = Dropout(drate)(x)
 
     #x = GlobalAveragePooling2D()(x)
-    x = GlobalMaxPooling2D()(x)
+    x = GlobalAveragePooling2D()(x)
     #x = Flatten()(x)
     #x = BatchNormalization(momentum=0.99)(x)
 
@@ -296,18 +296,18 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
     #x = GaussianNoise(2)(x)
     #x = BatchNormalization()(x)
     
-    x = Conv1D(128, 8)(x)
+    x = Conv1D(256, 8)(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = GaussianNoise(2)(x)
     #x = BatchNormalization()(x)
 
-    #x = Conv1D(128, 8)(x)
-    #x = LeakyReLU(alpha=0.2)(x)
+    x = Conv1D(512, 8)(x)
+    x = LeakyReLU(alpha=0.2)(x)
     #x = GaussianNoise(2)(x)
     #x = BatchNormalization()(x)
     
     #x = Flatten()(x)
-    x = GlobalMaxPooling1D()(x)
+    x = GlobalAveragePooling1D()(x)
     #x = BatchNormalization()(x)
 
     #x = Dense(n_channels)(x)
