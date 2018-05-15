@@ -48,7 +48,7 @@ hyperparams.n_samples = int(hyperparams.n_total*0.5)
 hyperparams.noise_dim = 100
 hyperparams.noise_samples = int(hyperparams.n_total*0.5)
 hyperparams.batch_size = 16
-hyperparams.epochs = 100
+hyperparams.epochs = 1000
 hyperparams.g_lr = 1e-4 #4e-3
 hyperparams.d_lr = 1e-3#1e-2
 hyperparams.loss = 'binary_crossentropy'
@@ -118,7 +118,8 @@ def sample_data_and_gen(G, xt_train, encoder, epoch, noise_dim=10, n_samples=100
     return X, y
 
 def pretrain(G, D, xt_train, encoder, noise_dim=10, n_samples=10000, noise_samples=10000, batch_size=32):
-    X, y = sample_data_and_gen(G, xt_train, encoder, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+    epoch = 1
+    X, y = sample_data_and_gen(G, xt_train, encoder, epoch, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
     set_trainability(D, True)
 
 
@@ -132,8 +133,8 @@ def sample_noise(G, xt_train, encoder, noise_dim=10, n_samples=10000):
 
     X = np.random.normal(0, 1, size=[n_samples, 1, noise_dim])
     y = np.zeros((n_samples, 2))
-    y[:, 0] = np.random.uniform(0.8,1)
-    y[:, 1] = np.random.uniform(0,0.2)
+    y[:, 0] = 1 #np.random.uniform(0.8,1)
+    y[:, 1] = 0 #np.random.uniform(0,0.2)
     return X, y
 
 def train(GAN, G, D, xt_train, encoder, epochs=500, n_samples=10000, noise_samples=hyperparams.noise_samples, noise_dim=10, batch_size=32, verbose=False, v_freq=1):
@@ -252,7 +253,7 @@ def get_generative(G_in, dense_dim=128, drate=0.5, out_dim=50, lr=1e-3):
     
     
     # transpose convolutional network
-    act = 'tanh'
+    act = 'linear'
     padding = 'same'
 
     x = Reshape((-1,1,1))(G_in)
@@ -263,12 +264,14 @@ def get_generative(G_in, dense_dim=128, drate=0.5, out_dim=50, lr=1e-3):
     #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
 
-    x = Conv2DTranspose(512,(1,1),strides=(1,1), dilation_rate=(1,1), padding=padding,activation='relu')(x)
+    x = Conv2DTranspose(512,(1,1),strides=(1,1), dilation_rate=(1,1), padding=padding,activation=act)(x)
+    x = LeakyReLU(alpha=0.2)(x)
     #x = GaussianNoise(1)(x)
     #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
 
-    x = Conv2DTranspose(256,(1,1),strides=(1,1), dilation_rate=(1,1), padding=padding,activation='relu')(x)
+    x = Conv2DTranspose(256,(1,1),strides=(1,1), dilation_rate=(1,1), padding=padding,activation=act)(x)
+    x = LeakyReLU(alpha=0.2)(x)
     #x = GaussianNoise(1)(x)
     #x = BatchNormalization()(x)
     #x = Conv2D(128, (1,32), activation=act)(x)
@@ -276,11 +279,13 @@ def get_generative(G_in, dense_dim=128, drate=0.5, out_dim=50, lr=1e-3):
     #x = Dropout(drate)(x)
 
     x = Conv2DTranspose(128,(1,3),strides=(1,1),padding=padding,activation=act)(x)
+    x = LeakyReLU(alpha=0.2)(x)
     #x = GaussianNoise(1)(x)
     #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
 
     x = Conv2DTranspose(64,(1,4),strides=(1,1),padding=padding,activation=act)(x)
+    x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
 
     #x = GlobalAveragePooling2D()(x)
