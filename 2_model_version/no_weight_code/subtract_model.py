@@ -26,7 +26,8 @@ from scipy import signal
 
 class hyperparams():
     def __init__(self,n_total,n_samples,noise_samples,noise_dim,
-                 batch_size,epochs,g_lr,d_lr,loss,outdim,noise_level):
+                 batch_size,epochs,g_lr,d_lr,loss,outdim,noise_level,
+                 outdir):
         # set hyperparamters
         self.n_total = n_total
         self.n_samples = n_samples
@@ -39,6 +40,7 @@ class hyperparams():
         self.loss = loss
         self.outdim = outdim
         self.noise_level = noise_level
+        self.outdir = outdir
 
 # set hyperparamters
 hyperparams.n_total = 100
@@ -46,13 +48,13 @@ hyperparams.n_samples = int(hyperparams.n_total*0.5)
 hyperparams.noise_dim = 100
 hyperparams.noise_samples = int(hyperparams.n_total*0.5)
 hyperparams.batch_size = 16
-hyperparams.epochs = 1000
+hyperparams.epochs = 100
 hyperparams.g_lr = 1e-4 #4e-3
 hyperparams.d_lr = 1e-3#1e-2
 hyperparams.loss = 'binary_crossentropy'
 hyperparams.snr = 5
 hyperparams.outdim = 50
-
+hyperparams.outdir = '/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/'
 
 def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi, mul_range=[1, 2], snr=hyperparams.snr):
     vectors = []
@@ -80,7 +82,7 @@ def make_gan(GAN_in, G, D):
                 metrics=['accuracy'])
     return GAN, GAN_out
 
-def sample_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise_samples=100):
+def sample_data_and_gen(G, xt_train, encoder, epoch, noise_dim=10, n_samples=10000, noise_samples=100):
     # produce latent variables
     #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])
     #XN_noise = encoder.predict(latent_noise)
@@ -88,6 +90,12 @@ def sample_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noi
     XT = np.random.normal(0, hyperparams.snr, size=[n_samples, hyperparams.outdim])
     XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
     XN = G.predict(XN_noise)
+
+    # plot 1 generated waveform for each epoch
+    plt.plot(XN[0])
+    plt.savefig('{}waveforms/wvf_{}.png'.format(hyperparams.outdir,epoch))
+    plt.close()
+
     for s in range(noise_samples):
         #XN[s] = XN[s] / np.max(XN[s])
         XN[s] =  np.subtract(XN[s], xt_train[0])
@@ -152,7 +160,7 @@ def train(GAN, G, D, xt_train, encoder, epochs=500, n_samples=10000, noise_sampl
             X, y = sample_data_and_gen(G, xt_train, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
         """
 
-        X, y = sample_data_and_gen(G, xt_train, encoder, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
+        X, y = sample_data_and_gen(G, xt_train, encoder, epoch, n_samples=n_samples, noise_samples=noise_samples, noise_dim=noise_dim)
 
         """
         if epoch%5 == 0 or epoch == 0:
@@ -362,35 +370,18 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
     return D, D_out
 
 def main():
-    outdir = '/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/'
-
     # print out input waveforms
     ax = pd.DataFrame(np.transpose(sample_data(25))).plot(legend=False)
     ax = ax.get_figure()
     plt.xlabel('Time')
     plt.ylabel('Amplitude')
-    ax.savefig('%sinput_waveforms.png' % outdir)
+    ax.savefig('%sinput_waveforms.png' % hyperparams.outdir)
     plt.close(ax)
 
     #ht_train = sample_data(hyperparams.n_samples)
     ht_train = sample_data(1)
     xt_train = ht_train + np.random.normal(0, hyperparams.snr, size=[1, ht_train.shape[1]])
 
-    # initialize subplot figure
-    f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey=True)
-
-    ax = pd.DataFrame(np.transpose(ht_train[0]))
-    ax1.plot(ax, color='cyan', linewidth=0.5)
-    ax1.set_title('signal + (sig+noise)')
-    #ax1 = ax1.get_figure()
-    #ax.savefig('%sinput_waveforms.png' % outdir)
-    #plt.close(ax)
-
-    ax1.plot(xt_train[0], color='green', alpha=0.5, linewidth=0.5)
-    #plt.savefig('%sinput_waveforms_plusnoise.png' % outdir)
-    #plt.close(ax)
-
-    
     #G = keras.models.load_model('g_model.hdf5')
     G_in = Input(shape=(1,hyperparams.noise_dim))
     G, G_out = get_generative(G_in, lr=hyperparams.g_lr)
@@ -420,6 +411,20 @@ def main():
                            noise_samples=hyperparams.noise_samples, noise_dim=hyperparams.noise_dim, batch_size=hyperparams.batch_size, verbose=True)
 
     # plot several generated waveforms, noise-free signal, signal+noise
+    # initialize subplot figure
+    f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey=True)
+
+    ax = pd.DataFrame(np.transpose(ht_train[0]))
+    ax1.plot(ax, color='cyan', linewidth=0.5)
+    ax1.set_title('signal + (sig+noise)')
+    #ax1 = ax1.get_figure()
+    #ax.savefig('%sinput_waveforms.png' % outdir)
+    #plt.close(ax)
+
+    ax1.plot(xt_train[0], color='green', alpha=0.5, linewidth=0.5)
+    #plt.savefig('%sinput_waveforms_plusnoise.png' % outdir)
+    #plt.close(ax)
+
     N_VIEWED_SAMPLES = 25
     data_and_gen, residuals = test_data_and_gen(G, xt_train, encoder, noise_samples=N_VIEWED_SAMPLES, n_samples=N_VIEWED_SAMPLES, noise_dim=hyperparams.noise_dim)
     sig = pd.DataFrame(np.transpose(ht_train[0])) #.plot(legend=False, color='cyan')
@@ -444,7 +449,7 @@ def main():
     ax4.plot(np.transpose(residuals), color='red', alpha=0.25, linewidth=0.5)
     ax4.set_title('Residuals')
 
-    plt.savefig('%swaveform_results.png' % outdir, dpi=500)
+    plt.savefig('%swaveform_results.png' % hyperparams.outdir, dpi=500)
     plt.close()
 
 
@@ -457,8 +462,9 @@ def main():
             'Discriminative Loss': d_loss,
         }
     ) #.plot(title='Training loss', logy=True)
-    ax1.plot(loss_curve, title='Training loss', logy=True)
-    ax1.set_xlabel("Epochs")
+    ax1.plot(loss_curve)
+    ax1.set_title('Training loss')
+    #ax1.set_xlabel("Epochs")
     ax1.set_ylabel("Loss")
     ax1.set_yscale("log")
     #ax = ax.get_figure()
@@ -469,12 +475,13 @@ def main():
             'Discriminative Acc': d_acc,
         }
     )
-    ax2.plot(acc_curve, title='Training acc', logy=True)
-    ax1.set_xlabel("Epochs")
-    ax1.set_ylabel("Acc")
-    ax1.set_yscale("log")
+    ax2.plot(acc_curve)
+    ax2.set_title('Training acc')
+    ax2.set_xlabel("Epochs")
+    ax2.set_ylabel("Acc")
+    #ax2.set_yscale("log")
 
-    plt.savefig('%sloss_and_acc.png' % outdir)
+    plt.savefig('%sloss_and_acc.png' % hyperparams.outdir)
     plt.close()
 
     """
