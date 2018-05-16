@@ -22,6 +22,7 @@ from keras.layers.convolutional import UpSampling1D, Conv1D, UpSampling2D, Conv2
 from keras.layers.advanced_activations import LeakyReLU, PReLU
 from keras.optimizers import Adam, SGD, RMSprop
 from keras.callbacks import TensorBoard
+from keras.utils import plot_model
 from scipy import signal
 
 class hyperparams():
@@ -45,12 +46,12 @@ class hyperparams():
 # set hyperparamters
 hyperparams.n_total = 100
 hyperparams.n_samples = int(hyperparams.n_total*0.5)
-hyperparams.noise_dim = 100
+hyperparams.noise_dim = 10
 hyperparams.noise_samples = int(hyperparams.n_total*0.5)
-hyperparams.batch_size = 16
+hyperparams.batch_size = 8
 hyperparams.epochs = 1000
 hyperparams.g_lr = 1e-4 #4e-3
-hyperparams.d_lr = 1e-3#1e-2
+hyperparams.d_lr = 1e-4#1e-2
 hyperparams.loss = 'binary_crossentropy'
 hyperparams.snr = 5
 hyperparams.outdim = 50
@@ -87,30 +88,30 @@ def sample_data_and_gen(G, xt_train, encoder, epoch, noise_dim=10, n_samples=100
     #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])
     #XN_noise = encoder.predict(latent_noise)
 
-    XT = np.random.normal(0, hyperparams.snr, size=[n_samples, hyperparams.outdim])
-    XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
+    XT = np.random.normal(0, hyperparams.snr, size=[int(hyperparams.batch_size/2), hyperparams.outdim])
+    XN_noise = np.random.normal(0, 1, size=[int(hyperparams.batch_size/2), 1, noise_dim])
     XN = G.predict(XN_noise)
 
     # plot 1 generated waveform for each epoch
-    plt.plot(XN[0])
-    plt.savefig('{}waveforms/wvf_{}.png'.format(hyperparams.outdir,epoch))
-    plt.close()
+    #plt.plot(XN[0])
+    #plt.savefig('{}waveforms/wvf_{}.png'.format(hyperparams.outdir,epoch))
+    #plt.close()
 
-    for s in range(noise_samples):
+    for s in range(int(hyperparams.batch_size/2)):
         #XN[s] = XN[s] / np.max(XN[s])
         XN[s] =  np.subtract(XN[s], xt_train[0])
         #XN[s] = np.subtract(xt_train[0], XN[s])
 
     X = np.vstack((XT, XN))
-    y = np.zeros((n_samples+len(XN_noise), 2))
+    y = np.zeros((hyperparams.batch_size, 2))
 
     # set true labels
-    y[:n_samples, 0] = np.random.uniform(0.8,1)
-    y[n_samples:, 1] = np.random.uniform(0.8,1)
+    y[:int(hyperparams.batch_size/2), 0] = np.random.uniform(0.7,1)
+    y[int(hyperparams.batch_size/2):, 1] = np.random.uniform(0.7,1)
 
     # set false labels
-    y[:n_samples, 1] = np.random.uniform(0,0.2)
-    y[n_samples:, 0] = np.random.uniform(0,0.2)
+    y[:int(hyperparams.batch_size/2), 1] = np.random.uniform(0,0.3)
+    y[int(hyperparams.batch_size/2):, 0] = np.random.uniform(0,0.3)
 
     # randomly change labels
     
@@ -131,8 +132,8 @@ def sample_noise(G, xt_train, encoder, noise_dim=10, n_samples=10000):
     #latent_noise = np.random.normal(0, 1, size=[n_samples, 1, 50])
     #X = encoder.predict(latent_noise)
 
-    X = np.random.normal(0, 1, size=[n_samples, 1, noise_dim])
-    y = np.zeros((n_samples, 2))
+    X = np.random.normal(0, 1, size=[hyperparams.batch_size, 1, noise_dim])
+    y = np.zeros((hyperparams.batch_size, 2))
     y[:, 0] = 1 #np.random.uniform(0.8,1)
     y[:, 1] = 0 #np.random.uniform(0,0.2)
     return X, y
@@ -193,6 +194,7 @@ def train(GAN, G, D, xt_train, encoder, epochs=500, n_samples=10000, noise_sampl
 
         if verbose and (epoch + 1) % v_freq == 0:
             print("Epoch #{}: Generative Loss: {}, Acc: {} Discriminative Loss: {}, Acc: {}".format(epoch + 1, g_loss[-1], g_acc[-1], d_loss[-1], d_acc[-1]))
+    plot_model(GAN, show_shapes=True, to_file='{}model.png'.format(hyperparams.outdir))
     return d_loss, g_loss, d_acc, g_acc
 
 def test_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise_samples=100):
@@ -253,45 +255,45 @@ def get_generative(G_in, dense_dim=128, drate=0.5, out_dim=50, lr=1e-3):
     
     
     # transpose convolutional network
-    act = 'linear'
+    act = 'tanh'
     padding = 'same'
 
     x = Reshape((-1,1,1))(G_in)
-    #x = BatchNormalization()(x)
+    x = BatchNormalization(axis=1)(x)
     #x = Conv2DTranspose(128,(1,4), activity_regularizer=regularizers.l1(0.01), kernel_regularizer=regularizers.l2(0.01), strides=(1,1),padding='valid',activation=act)(x)
     #x = Conv2DTranspose(64,(1,128), strides=(1,2), dilation_rate=(1,1), padding='valid',activation=act)(x)
     #x = GaussianNoise(1)(x)
     #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
-
-    x = Conv2DTranspose(512,(1,1),strides=(1,1), dilation_rate=(1,1), padding=padding,activation=act)(x)
+    """
+    x = Conv2DTranspose(512,(1,1),strides=(1,2), dilation_rate=(1,1), padding=padding,activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
-    #x = GaussianNoise(1)(x)
-    #x = BatchNormalization()(x)
+    x = GaussianNoise(1)(x)
+    x = BatchNormalization(axis=1)(x)
     #x = Dropout(drate)(x)
-
+    
     x = Conv2DTranspose(256,(1,1),strides=(1,1), dilation_rate=(1,1), padding=padding,activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = GaussianNoise(1)(x)
-    #x = BatchNormalization()(x)
+    x = BatchNormalization(axis=1)(x)
     #x = Conv2D(128, (1,32), activation=act)(x)
     #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
-
-    x = Conv2DTranspose(128,(1,3),strides=(1,1),padding=padding,activation=act)(x)
+    """
+    x = Conv2DTranspose(128,(1,3),strides=(1,1), dilation_rate=(1,2), padding=padding,activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = GaussianNoise(1)(x)
-    #x = BatchNormalization()(x)
+    x = BatchNormalization(axis=1)(x)
     #x = Dropout(drate)(x)
-
-    x = Conv2DTranspose(64,(1,4),strides=(1,1),padding=padding,activation=act)(x)
+    
+    x = Conv2DTranspose(64,(1,2),strides=(1,1),dilation_rate=(1,3), padding=padding,activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
-    #x = BatchNormalization()(x)
-
+    x = BatchNormalization(axis=1)(x)
+    
     #x = GlobalAveragePooling2D()(x)
     x = GlobalAveragePooling2D()(x)
     #x = Flatten()(x)
-    #x = BatchNormalization(momentum=0.99)(x)
+    #x = BatchNormalization(axis=1)(x)
 
     #x = Dense(256, activation='tanh')(x)
     #x = GaussianNoise(1)(x)
@@ -321,45 +323,49 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
     x = Dense(n_channels)(x)
     """
     padding='valid'
-    act='relu'
+    act='tanh'
+    strides=1
+    gauss_noise = 1.6
 
 
     x = Reshape((-1, 1))(D_in)
     #x = Conv1D(128, 8, activity_regularizer=regularizers.l1(0.0001), kernel_regularizer=regularizers.l2(0.01))(x)
-    x = Conv1D(64, 16, padding=padding, activation=act)(x)
+    x = Conv1D(128, 8, padding=padding, strides=strides, activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
-    #x = GaussianNoise(2)(x)
-    #x = BatchNormalization(momentum=0.25)(x)
-    x = Dropout(drate)(x)
+    x = GaussianNoise(gauss_noise)(x)
+    x = BatchNormalization(axis=1)(x)
+    #x = Dropout(drate)(x)
     
-    x = Conv1D(128, 8, padding=padding, activation=act)(x)
-    #x = LeakyReLU(alpha=0.2)(x)
-    x = Dropout(drate)(x)
-    #x = GaussianNoise(2)(x)
-    #x = BatchNormalization()(x)
+    x = Conv1D(256, 8, padding=padding, strides=strides, activation=act)(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    #x = Dropout(drate)(x)
+    x = GaussianNoise(gauss_noise)(x)
+    x = BatchNormalization(axis=1)(x)
     
-    x = Conv1D(256, 8, padding=padding, activation=act)(x)
-    #x = LeakyReLU(alpha=0.2)(x)
-    x = Dropout(drate)(x)
-    #x = GaussianNoise(2)(x)
-    #x = BatchNormalization()(x)
+    x = Conv1D(512, 8, padding=padding, strides=strides, activation=act)(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    #x = Dropout(drate)(x)
+    x = GaussianNoise(gauss_noise)(x)
+    x = BatchNormalization(axis=1)(x)
+    """
+    x = Conv1D(1024, 8, padding=padding, strides=strides, activation=act)(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    #x = Dropout(drate)(x)
+    x = GaussianNoise(gauss_noise)(x)
+    x = BatchNormalization(axis=1)(x)
 
-    x = Conv1D(512, 8, padding=padding, activation=act)(x)
-    #x = LeakyReLU(alpha=0.2)(x)
-    x = Dropout(drate)(x)
-    #x = GaussianNoise(2)(x)
-    #x = BatchNormalization()(x)
-
-    x = Conv1D(1024, 8, padding=padding, activation=act)(x)
-    #x = LeakyReLU(alpha=0.2)(x)
-    x = Dropout(drate)(x)
-
+    x = Conv1D(2048, 8, padding=padding, strides=strides, activation=act)(x)
+    x = LeakyReLU(alpha=0.2)(x)
+    #x = Dropout(drate)(x)
+    x = GaussianNoise(gauss_noise)(x)
+    x = BatchNormalization(axis=1)(x)
+    """
     #x = Conv1D(2048, 4)(x)
     #x = LeakyReLU(alpha=0.2)(x)
     
     #x = Flatten()(x)
     x = GlobalAveragePooling1D()(x)
-    #x = BatchNormalization()(x)
+    #x = BatchNormalization(axis=1)(x)
 
     #x = Dense(n_channels)(x)
     #x = LeakyReLU(alpha=0.2)(x)
@@ -367,7 +373,7 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
     #x = Dropout(drate)(x)
 
     D_out = Dense(2, activation='sigmoid')(x)
-    #D_out = BatchNormalization()(D_out) 
+    #D_out = BatchNormalization(axis=1)(D_out) 
     D = Model(D_in, D_out)
     dopt = Adam(lr=lr, beta_1=0.5, decay=1e-4)
     D.compile(loss='binary_crossentropy', optimizer=dopt,
