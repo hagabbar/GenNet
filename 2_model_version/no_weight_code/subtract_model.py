@@ -20,7 +20,7 @@ from keras.layers.core import Dense, Dropout, Flatten
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling1D, Conv1D, UpSampling2D, Conv2D
 from keras.layers.advanced_activations import LeakyReLU, PReLU
-from keras.optimizers import Adam, SGD, RMSprop
+from keras.optimizers import Adam, SGD, RMSprop, Nadam
 from keras.callbacks import TensorBoard
 from keras.utils import plot_model
 from scipy import signal
@@ -46,16 +46,16 @@ class hyperparams():
 # set hyperparamters
 hyperparams.n_total = 100
 hyperparams.n_samples = int(hyperparams.n_total*0.5)
-hyperparams.noise_dim = 10
+hyperparams.noise_dim = 100
 hyperparams.noise_samples = int(hyperparams.n_total*0.5)
-hyperparams.batch_size = 8
 hyperparams.epochs = 1000
+hyperparams.batch_size = 4
 hyperparams.g_lr = 1e-4 #4e-3
 hyperparams.d_lr = 1e-4#1e-2
 hyperparams.loss = 'binary_crossentropy'
 hyperparams.snr = 5
 hyperparams.outdim = 50
-hyperparams.outdir = '/home/hunter.gabbard/public_html/Burst/Gauss_pulse_testing/sineGauss_subtract/'
+hyperparams.outdir = 'output/'
 
 def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi, mul_range=[1, 2], snr=hyperparams.snr):
     vectors = []
@@ -114,7 +114,7 @@ def sample_data_and_gen(G, xt_train, encoder, epoch, noise_dim=10, n_samples=100
     y[int(hyperparams.batch_size/2):, 0] = np.random.uniform(0,0.3)
 
     # randomly change labels
-    
+
 
     return X, y
 
@@ -227,7 +227,7 @@ def get_generative(G_in, dense_dim=128, drate=0.5, out_dim=50, lr=1e-3):
     """
     # original network
     x = Reshape((-1,1,1))(G_in)
-    x = BatchNormalization()(x) 
+    x = BatchNormalization()(x)
     x = Conv2DTranspose(128,(1,4),strides=(1,1),padding='valid',activation='relu')(x)
     x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
@@ -252,44 +252,51 @@ def get_generative(G_in, dense_dim=128, drate=0.5, out_dim=50, lr=1e-3):
     opt = SGD(lr=lr)
     G.compile(loss='binary_crossentropy', optimizer=opt)
     """
-    
-    
+
+
     # transpose convolutional network
     act = 'tanh'
     padding = 'same'
 
-    x = Reshape((-1,1,1))(G_in)
+    # add in dense layer
+    x = Dense(1024, activation=act)(G_in)
+    x = BatchNormalization(axis=1)(x)
+
+    #x = Dense(512, activation=act)(G_in)
+    #x = BatchNormalization(axis=1)(x)
+
+    x = Reshape((-1,1,1))(x)
     x = BatchNormalization(axis=1)(x)
     #x = Conv2DTranspose(128,(1,4), activity_regularizer=regularizers.l1(0.01), kernel_regularizer=regularizers.l2(0.01), strides=(1,1),padding='valid',activation=act)(x)
     #x = Conv2DTranspose(64,(1,128), strides=(1,2), dilation_rate=(1,1), padding='valid',activation=act)(x)
     #x = GaussianNoise(1)(x)
     #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
-    """
-    x = Conv2DTranspose(512,(1,1),strides=(1,2), dilation_rate=(1,1), padding=padding,activation=act)(x)
+
+    x = Conv2DTranspose(512,(1,9),strides=(1,2), dilation_rate=(1,9), padding=padding,activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
     x = GaussianNoise(1)(x)
     x = BatchNormalization(axis=1)(x)
     #x = Dropout(drate)(x)
-    
-    x = Conv2DTranspose(256,(1,1),strides=(1,1), dilation_rate=(1,1), padding=padding,activation=act)(x)
+
+    x = Conv2DTranspose(256,(1,7),strides=(1,1), dilation_rate=(1,7), padding=padding,activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = GaussianNoise(1)(x)
     x = BatchNormalization(axis=1)(x)
     #x = Conv2D(128, (1,32), activation=act)(x)
     #x = BatchNormalization()(x)
     #x = Dropout(drate)(x)
-    """
+
     x = Conv2DTranspose(128,(1,3),strides=(1,1), dilation_rate=(1,2), padding=padding,activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = GaussianNoise(1)(x)
     x = BatchNormalization(axis=1)(x)
     #x = Dropout(drate)(x)
-    
+
     x = Conv2DTranspose(64,(1,2),strides=(1,1),dilation_rate=(1,3), padding=padding,activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
     x = BatchNormalization(axis=1)(x)
-    
+
     #x = GlobalAveragePooling2D()(x)
     x = GlobalAveragePooling2D()(x)
     #x = Flatten()(x)
@@ -305,9 +312,10 @@ def get_generative(G_in, dense_dim=128, drate=0.5, out_dim=50, lr=1e-3):
     G = Model(G_in, G_out)
     #opt = SGD(lr=lr)
     opt = Adam(lr=lr, beta_1=0.5, decay=1e-4)
-    G.compile(loss='binary_crossentropy', optimizer=opt,
+    #opt = Nadam(lr=lr, schedule_decay=1e-3)
+    G.compile(loss=hyperparams.loss, optimizer=opt,
               metrics=['accuracy'])
-    
+
 
     return G, G_out
 
@@ -335,13 +343,13 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
     x = GaussianNoise(gauss_noise)(x)
     x = BatchNormalization(axis=1)(x)
     #x = Dropout(drate)(x)
-    
+
     x = Conv1D(256, 8, padding=padding, strides=strides, activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = Dropout(drate)(x)
     x = GaussianNoise(gauss_noise)(x)
     x = BatchNormalization(axis=1)(x)
-    
+
     x = Conv1D(512, 8, padding=padding, strides=strides, activation=act)(x)
     x = LeakyReLU(alpha=0.2)(x)
     #x = Dropout(drate)(x)
@@ -362,7 +370,7 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
     """
     #x = Conv1D(2048, 4)(x)
     #x = LeakyReLU(alpha=0.2)(x)
-    
+
     #x = Flatten()(x)
     x = GlobalAveragePooling1D()(x)
     #x = BatchNormalization(axis=1)(x)
@@ -373,10 +381,11 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
     #x = Dropout(drate)(x)
 
     D_out = Dense(2, activation='sigmoid')(x)
-    #D_out = BatchNormalization(axis=1)(D_out) 
+    #D_out = BatchNormalization(axis=1)(D_out)
     D = Model(D_in, D_out)
     dopt = Adam(lr=lr, beta_1=0.5, decay=1e-4)
-    D.compile(loss='binary_crossentropy', optimizer=dopt,
+    #dopt = Nadam(lr=lr, schedule_decay=1e-3)
+    D.compile(loss='mean_squared_error', optimizer=dopt,
               metrics=['accuracy'])
     return D, D_out
 
