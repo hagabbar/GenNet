@@ -46,7 +46,7 @@ hyperparams.n_samples = int(hyperparams.n_total*0.5)
 hyperparams.noise_dim = 1
 hyperparams.noise_samples = int(hyperparams.n_total*0.5)
 hyperparams.batch_size = 16
-hyperparams.epochs = 500
+hyperparams.epochs = 2500
 hyperparams.g_lr = 1e-4 #4e-3
 hyperparams.d_lr = 1e-4#1e-2
 hyperparams.loss = 'binary_crossentropy'
@@ -84,7 +84,7 @@ def sample_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noi
     #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])
     #XN_noise = encoder.predict(latent_noise)
 
-    XT = np.random.normal(0, 1, size=[n_samples, hyperparams.outdim])
+    XT = np.random.normal(0, 5, size=[n_samples, hyperparams.outdim])
     XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
     XN = G.predict(XN_noise)
     for s in range(noise_samples):
@@ -175,7 +175,7 @@ def test_data_and_gen(G, xt_train, encoder, noise_dim=10, n_samples=10000, noise
     #latent_noise = np.random.normal(0, 1, size=[noise_samples, 1, 50])
     #XN_noise = encoder.predict(latent_noise)
 
-    XT = np.random.normal(0, 1, size=[n_samples, hyperparams.outdim])
+    XT = np.random.normal(0, 5, size=[n_samples, hyperparams.outdim])
     XN_noise = np.random.normal(0, 1, size=[noise_samples, 1, noise_dim])
 
     XN = G.predict(XN_noise)
@@ -268,8 +268,8 @@ def get_discriminative(D_in, lr=1e-3, drate=.3, n_channels=50, conv_sz=5, leak=.
     #x = BatchNormalization()(x)
     x = Dropout(drate)(x)
     
-    x = Conv1D(128, 8)(x)
-    x = LeakyReLU(alpha=0.2)(x)
+    #x = Conv1D(128, 8)(x)
+    #x = LeakyReLU(alpha=0.2)(x)
     #x = BatchNormalization()(x)
     #x = Conv1D(256, 4)(x)
     #x = LeakyReLU(alpha=0.2)(x)
@@ -302,7 +302,7 @@ def main():
 
     #ht_train = sample_data(hyperparams.n_samples)
     ht_train = sample_data(1)
-    xt_train = ht_train + np.random.normal(0, 1, size=[1, ht_train.shape[1]])
+    xt_train = ht_train + np.random.normal(0, 5, size=[1, ht_train.shape[1]])
 
     # initialize subplot figure
     f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey=True)
@@ -328,7 +328,7 @@ def main():
     #D = keras.models.load_model('d_model.hdf5')
     D_in = Input(shape=(hyperparams.outdim,))
     D, D_out = get_discriminative(D_in, lr=hyperparams.d_lr)
-    #D.load_weights('best_d_weights.hdf5')
+    D.load_weights('best_d_weights.hdf5')
     D.summary()
 
     GAN_in = Input((1,hyperparams.noise_dim))
