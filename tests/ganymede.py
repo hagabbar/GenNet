@@ -535,7 +535,7 @@ def main():
         pe_losses = []         # initialise the losses for plotting
         i = 0
         rms = [1.0,1.0]
-        while np.all(rms>5e-4):
+        while rms[0]>5e-4 or rms[1]>5e-4:
 	
             # get random batch from images
             idx = random.sample(np.arange(signal_train_images.shape[0]),batch_size)
@@ -635,7 +635,7 @@ def main():
 	    #plot_losses(losses,"%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS','N-GEN'])
 
 	    # plot posterior samples
-            if pe_iter>0:
+            if do_pe:
                 # first use the generator to make MANY fake images
         	noise = np.random.uniform(size=[1000, 100], low=-1.0, high=1.0)
         	more_generated_images = generator.predict(noise)
@@ -646,7 +646,7 @@ def main():
             if save_models:
 	        generator.save_weights('generator.h5', True)
                 discriminator.save_weights('discriminator.h5', True)
-                if pe_iter>0:
+                if do_pe:
                     signal_pe.save_weights('signal_pe.h5', True)
 
 main()
