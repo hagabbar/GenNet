@@ -535,7 +535,7 @@ def main():
         pe_losses = []         # initialise the losses for plotting
         i = 0
         rms = [1.0,1.0]
-        while np.all(rms)>5e-4:
+        while np.all(rms>5e-4):
 	
             # get random batch from images
             idx = random.sample(np.arange(signal_train_images.shape[0]),batch_size)
