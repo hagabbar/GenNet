@@ -11,6 +11,9 @@ from keras import backend as K
 from keras.engine.topology import Layer
 from keras.optimizers import Adam
 from tensorflow.examples.tutorials.mnist import input_data
+from scipy.stats import multivariate_normal as mvn
+from scipy.special import logit, expit
+from itertools import product as itprod
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -22,14 +25,19 @@ import random
 import string
 
 # define some global params
-mnist_sig = True	# use the mnist dataset in tensorflow?
+mnist_sig = False	# use the mnist dataset in tensorflow?
+Ngauss_sig = 10000	# Number of simple Gaussian blob signals to generate (<=0 means don't use)
 n_colors = 1		# greyscale = 1 or colour = 3
 n_pix = 32		# the rescaled image size (n_pix x n_pix)
-n_sig = 0.75		# the noise standard deviation (if None then use noise images)
+n_sig = 2.0		# the noise standard deviation (if None then use noise images)
 batch_size = 128	# the batch size (twice this when testing discriminator)
-max_iter = 30*1000	# the maximum number of steps or epochs
-cadence = 10 		# the cadence of output images
+max_iter = 5*1000	# the maximum number of steps or epochs
+cadence = 500 		# the cadence of output images
 save_models = False	# save the generator and discriminator models
+do_pe = True		# perform parameter estimation? 
+pe_cadence = 100  	# the cadence of PE outputs
+npar = 2 		# the number of parameters to estimate
+blob_scale = 0.15	# the scale of the Gaussian blob widths (image spans 0-1)
 
 # catch input errors
 if n_pix != 32 and n_pix != 64:
@@ -38,7 +46,15 @@ if n_pix != 32 and n_pix != 64:
 if mnist_sig==True and n_colors != 1:
     print 'Sorry, the mnist data is greyscale only'
     exit(0)
-    
+if mnist_sig==True and Ngauss_sig>0:
+    print 'Sorry, can\'t use both mnist and gaussian signals'
+    exit(0)
+if Ngauss_sig>0 and n_colors==3:
+    print 'Sorry, can\'t use colour images with the gaussian signals'
+    exit(0)    
+if do_pe==True and Ngauss_sig<=0:
+    print 'Sorry, can only do parameter estimation if using a parameterised signal model'
+    exit(0)
 
 # the locations of signal files and output directory
 signal_path = './data/gwbush/*.jpg'
@@ -114,6 +130,37 @@ def data_subtraction_model(noise_signal):
    
     return model
 
+def signal_pe_model():
+    """
+    The PE network that learns how to convert images into parameters
+    """
+    model = Sequential()
+
+    # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
+    # the activation is tanh and we apply a 2x2 max pooling
+    model.add(Conv2D(64, (5, 5), input_shape=(n_pix, n_pix, n_colors), padding='same'))
+    model.add(Activation('tanh'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+
+    # the next layer is another 2D convolution with 128 neurons and a 5x5
+    # filter. More 2x2 max pooling and a tanh activation. The output is flattened
+    # for input to the next dense layer
+    model.add(Conv2D(128, (5, 5)))
+    model.add(Activation('tanh'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Flatten())
+
+    # we now use a dense layer with 1024 outputs and a tanh activation
+    model.add(Dense(1024))
+    model.add(Activation('tanh'))
+
+    # the final dense layer has a linear activation and 2 outputs
+    # we are currently testing with only 2 outputs - can be generalised
+    model.add(Dense(2))
+    model.add(Activation('linear'))
+
+    return model
+
 def signal_discriminator_model():
     """
     The discriminator that should train itself to recognise generated signals
@@ -175,7 +222,7 @@ def renorm(image):
     mean = 0.5*(np.max(image)+np.min(image))
     return (image - mean)/hspan
 
-def load_images(filepath,flip=True,mnist=False):
+def load_images(filepath,flip=True,mnist=False,Nsig=0):
     """
     This function loads in images from the filepath
     If flip is True then we make a horizontally flipped copy of each image read in.
@@ -191,7 +238,14 @@ def load_images(filepath,flip=True,mnist=False):
 	    img = Image.fromarray(tmp.squeeze())
             arr = np.array(img.resize((n_pix, n_pix)))	# resize from 28x28 to n_pix x n_pix
             res.append(renorm(arr))			# normalise each image to be -1 to 1	
-    
+
+    elif Nsig>0:					# or make fake parameterised Gaussian blob signals    
+
+	# make some Gaussian blob images
+        # these are parameterised so we can do PE with them
+	res,pars = gen_gauss_signals(Nsig)	
+        return np.array(res).reshape(-1,n_pix,n_pix,n_colors), np.array(pars).reshape(-1,npar)
+
     else:						# otherwise read in from directory
         files = glob.glob(filepath)			# get filelist from path
         
@@ -211,6 +265,34 @@ def load_images(filepath,flip=True,mnist=False):
     
     # return the reshaped array of images
     return np.array(res).reshape(-1,n_pix,n_pix,n_colors)
+
+def gen_gauss_signals(N=1,pars=None):
+    """
+    This function generates Gaussian blob images with varying location parameters
+    - takes in parameter values if provided (x and y means as fraction of image)
+    """
+
+    # initialise results and set up vector of locations on the image
+    sig = []			# stores the output images
+    params = []			# stores the output parameters (x,y means)
+    cov = (blob_scale**2)*np.eye(2)	# the blob covariance (constant for now)
+    x = np.arange(n_pix)
+    xy = np.array([k for k in itprod(x,x)]).reshape(n_pix*n_pix,2)
+    
+    # loop over each generated signal
+    for _ in range(N):
+        if pars is not None:
+            mean = pars		# if params provided then use them
+        else:
+	    mean = np.random.uniform(0,1.0,size=2)	# else draw random values
+        	
+	# compute Gaussian pdf value at all locations for this choice of mean
+        # also renormalise to [-1,1]
+	sig.append(renorm(mvn.pdf(xy, mean=n_pix*mean, cov=n_pix*n_pix*cov)))
+        params.append([mean[0],mean[1]])	# record the params
+
+    # return the images and the paramneters used to generate them
+    return np.array(sig).reshape(N,n_pix,n_pix,n_colors), np.array(params).reshape(-1,npar)
 
 def combine_images(generated_images, cols=4, rows=4,randomize=True,extra=None):
     """
@@ -252,7 +334,7 @@ def combine_images(generated_images, cols=4, rows=4,randomize=True,extra=None):
     
     return image
 
-def plot_losses(losses,filename,logscale=False):
+def plot_losses(losses,filename,logscale=False,legend=None):
     """
     Make loss and accuracy plots and output to file.
     Plot with x and y log-axes is desired
@@ -260,28 +342,98 @@ def plot_losses(losses,filename,logscale=False):
 
     # plot losses
     fig = plt.figure()
+    losses = np.array(losses)
     ax1 = fig.add_subplot(211)	
-    ax1.plot(np.array(losses)[:,0],'b')
-    ax1.plot(np.array(losses)[:,2],'r')
-    ax1.plot(np.array(losses)[:,4],'g')
+    ax1.plot(losses[:,0],'b')
+    if losses.shape[1]>2:
+        ax1.plot(losses[:,2],'r')
+    if losses.shape[1]>4:
+        ax1.plot(losses[:,4],'g')
     ax1.set_xlabel(r'epoch')
     ax1.set_ylabel(r'loss')
-    ax1.legend(['S-GEN','S-DIS','N-GEN'],loc='upper left')
+    if legend is not None:
+    	ax1.legend(legend,loc='upper left')
     
     # plot accuracies
     ax2 = fig.add_subplot(212)
-    ax2.plot(np.array(losses)[:,1],'b')
-    ax2.plot(np.array(losses)[:,3],'r')
-    ax2.plot(np.array(losses)[:,5],'g')
+    ax2.plot(logit(losses[:,1]),'b')
+    if losses.shape[1]>3:
+        ax2.plot(logit(losses[:,3]),'r')
+    if losses.shape[1]>5:
+        ax2.plot(logit(losses[:,5]),'g')
+    # rescale axis using a logistic function so that we see more detail
+    # close to 0 and close 1
+    ax2.set_yticks(logit([0.001,0.01,0.1,0.5,0.9,0.99,0.999]))
+    ax2.set_yticklabels(['0.001','0.01','0.1','0.5','0.9','0.99','0.999'])
     ax2.set_xlabel(r'epoch')
     ax2.set_ylabel(r'accuracy')
     if logscale==True:
         ax1.set_xscale("log", nonposx='clip')
         ax2.set_xscale("log", nonposx='clip')
         ax1.set_yscale("log", nonposx='clip')
-        ax2.set_yscale("log", nonposx='clip')
     plt.savefig(filename)
     plt.close('all')
+
+def plot_pe_accuracy(true_pars,est_pars,outfile):
+    """
+    Plots the true vs the estimated paranmeters from the PE training
+    """
+    fig = plt.figure()
+    ax1 = fig.add_subplot(121,aspect=1.0)
+    ax1.plot(true_pars[:,0],est_pars[:,0],'.b')
+    ax1.plot([0,1],[0,1],'--k')
+    ax1.set_xlabel(r'True parameter 1')
+    ax1.set_ylabel(r'Estimated parameter 1')
+    ax1.set_xlim([0,1])
+    ax1.set_ylim([0,1])
+    ax2 = fig.add_subplot(122,aspect=1.0)
+    ax2.plot(true_pars[:,1],est_pars[:,1],'.b')
+    ax2.plot([0,1],[0,1],'--k')
+    ax2.set_xlabel(r'True parameter 2')
+    ax2.set_ylabel(r'Estimated parameter 2')
+    ax2.set_xlim([0,1])
+    ax2.set_ylim([0,1])
+    plt.savefig(outfile)
+    plt.close('all')
+
+def plot_pe_samples(pe_samples,truth,like,outfile):
+    """
+    Makes scatter plot of samples estimated from PE model
+    """
+    fig = plt.figure()
+    ax1 = fig.add_subplot(111)
+    if like is not None:
+        # compute enclose probability contours
+        enc_post = get_enclosed_prob(like,1.0/n_pix)
+        x = np.linspace(0,1,n_pix)
+        X, Y = np.meshgrid(x,x)
+        cmap = plt.cm.get_cmap("Greys")
+        ax1.contourf(X, Y, enc_post, 100, cmap=cmap) 
+        ax1.contour(X, Y, enc_post, [1.0-0.68], colors='b',linestyles='solid')
+        ax1.contour(X, Y, enc_post, [1.0-0.9], colors='b',linestyles='dashed')
+        ax1.contour(X, Y, enc_post, [1.0-0.99], colors='b',linestyles='dotted') 
+    if pe_samples is not None:
+        ax1.plot(pe_samples[:,0],pe_samples[:,1],'.r',markersize=0.8)
+    ax1.plot([truth[0],truth[0]],[0,1],'-k')
+    ax1.plot([0,1],[truth[1],truth[1]],'-k')
+    ax1.set_xlabel(r'Parameter 1')
+    ax1.set_ylabel(r'Parameter 2')
+    ax1.set_xlim([0,1])
+    ax1.set_ylim([0,1])
+    plt.savefig(outfile)
+    plt.close('all')
+
+def get_enclosed_prob(x,dx):
+    """
+    Generates contour data for enclosed probability
+    """
+    s = x.shape
+    x = x.flatten()
+    idx = np.argsort(x)[::-1]
+    y = np.zeros(x.shape)
+    y[idx] = np.cumsum(x[idx])*dx*dx
+    y /= np.max(y)
+    return 1.0 - y.reshape(s)
 
 def set_trainable(model, trainable):
     """
@@ -300,7 +452,7 @@ def main():
     os.system('mkdir -p %s' % out_path)     
     
     # load signal training images and save examples
-    signal_train_images = load_images(signal_path,mnist=mnist_sig)
+    signal_train_images, signal_train_pars = load_images(signal_path,mnist=mnist_sig,Nsig=Ngauss_sig)
     signal_train_out = combine_images(signal_train_images)
     signal_train_out.save('%s/signal_train.png' % out_path)
 
@@ -309,7 +461,10 @@ def main():
     i = np.random.randint(0,signal_train_images.shape[0],size=1)
     signal_image = signal_train_images[i,:,:,:]
     signal_train_images = np.delete(signal_train_images,i,axis=0)
-    
+    if do_pe:
+        signal_pars = signal_train_pars[i,:]
+        signal_train_pars = np.delete(signal_train_pars,i,axis=0)    
+
     # Generate single noise image
     noise_image = np.random.normal(0.0,n_sig,size=(1,n_pix,n_pix,n_colors))
 
@@ -328,7 +483,9 @@ def main():
     signal_discriminator = signal_discriminator_model()
     data_subtraction = data_subtraction_model(noise_signal)	# need to pass the measured data here
     generator = generator_model()
-    
+    if do_pe:
+        signal_pe = signal_pe_model()    
+
     # setup generator training for when we subtract from the 
     # measured data and expect Gaussian residuals.
     # We use a mean squared error here since we want it to find 
@@ -347,11 +504,68 @@ def main():
     set_trainable(signal_discriminator, True)	# set it back to being trainable
     signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=0.0002, beta_1=0.5), metrics=['accuracy'])
 
+    if do_pe:
+        signal_pe.compile(loss='mean_squared_error', optimizer=Adam(lr=0.0002, beta_1=0.5), metrics=['accuracy'])
+
     # print the model summaries
     print(generator.summary())
     print(data_subtraction_on_generator.summary())
     print(signal_discriminator_on_generator.summary())
     print(signal_discriminator.summary())
+    if do_pe:
+        print(signal_pe.summary())
+
+    ################################################
+    # DO PARAMETER ESTIMATION ######################
+
+    if do_pe:
+
+        # first compute true PE on a grid
+        x = np.linspace(0,1,n_pix)
+        xy = np.array([k for k in itprod(x,x)]).reshape(n_pix*n_pix,2)
+        L = []
+        for pars in xy:
+            template = np.array(gen_gauss_signals(1,pars=pars)[0]).reshape(n_pix,n_pix)
+	    L.append(-0.5*np.sum(((noise_signal.reshape(n_pix,n_pix)-template)/n_sig)**2))
+        L = np.array(L).reshape(n_pix,n_pix).transpose()
+        L = np.exp(L-np.max(L))
+        plot_pe_samples(None,signal_pars[0],L,'%s/pe_truelike.png' % out_path)
+        print('Completed true grid PE')
+
+        pe_losses = []         # initialise the losses for plotting
+        i = 0
+        rms = [1.0,1.0]
+        while np.all(rms)>5e-4:
+	
+            # get random batch from images
+            idx = random.sample(np.arange(signal_train_images.shape[0]),batch_size)
+            signal_batch_images = signal_train_images[idx]
+	    signal_batch_pars = signal_train_pars[idx]
+
+            # train only the signal PE model on the data
+            pe_loss = signal_pe.train_on_batch(signal_batch_images,signal_batch_pars)
+	    pe_losses.append(pe_loss)
+
+	    # output status and save images
+            if ((i % pe_cadence == 0) & (i>0)):
+
+		# plot loss curves - non-log and log
+                plot_losses(pe_losses,'%s/pe_losses.png' % out_path,legend=['PE-GEN'])
+                plot_losses(pe_losses,'%s/pe_losses_logscale.png' % out_path,logscale=True,legend=['PE-GEN'])
+
+		# plot true vs predicted values for all training data
+                pe_samples = signal_pe.predict(signal_train_images)
+		plot_pe_accuracy(signal_train_pars,pe_samples,'%s/pe_accuracy%05d.png' % (out_path,i))
+            
+	        # compute RMS difference
+                rms = [np.mean((signal_train_pars[:,k]-pe_samples[:,k])**2) for k in np.arange(2)]
+
+                pe_mesg = "%d: [PE loss: %f, acc: %f, RMS: %f,%f]" % (i, pe_loss[0], pe_loss[1], rms[0], rms[1])
+                print(pe_mesg)
+
+            i += 1
+ 
+        print('Completed CNN PE')
 
     ################################################
     # LOOP OVER BATCHES ############################
@@ -416,12 +630,23 @@ def main():
             ms_out.save('%s/mean_std_res_signal%05d.png' % (out_path,i))
 
             # plot loss curves - non-log and log
-            plot_losses(losses,"/data/public_html/chrism/GenNet/tests/losses.png")
-	    plot_losses(losses,"/data/public_html/chrism/GenNet/tests/losses_logscale.png",logscale=True)
+            plot_losses(losses,'%s/losses.png' % out_path,legend=['S-GEN','S-DIS','N-GEN'])
+            plot_losses(losses,'%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS','N-GEN'])
+	    #plot_losses(losses,"%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS','N-GEN'])
+
+	    # plot posterior samples
+            if pe_iter>0:
+                # first use the generator to make MANY fake images
+        	noise = np.random.uniform(size=[1000, 100], low=-1.0, high=1.0)
+        	more_generated_images = generator.predict(noise)
+                pe_samples = signal_pe.predict(more_generated_images)
+                plot_pe_samples(pe_samples,signal_pars[0],L,'%s/pe_samples%05d.png' % (out_path,i))
 
 	    # save trained models
             if save_models:
 	        generator.save_weights('generator.h5', True)
                 discriminator.save_weights('discriminator.h5', True)
+                if pe_iter>0:
+                    signal_pe.save_weights('signal_pe.h5', True)
 
 main()
