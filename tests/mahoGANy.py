@@ -31,9 +31,9 @@ mnist_sig = False	# use the mnist dataset in tensorflow?
 Ngauss_sig = 10000	# Number of simple Gaussian blob signals to generate (<=0 means don't use)
 n_colors = 1		# greyscale = 1 or colour = 3
 n_pix = 50		# the rescaled image size (n_pix x n_pix)
-n_sig = 2.0		# the noise standard deviation (if None then use noise images)
+n_sig = 0.25		# the noise standard deviation (if None then use noise images)
 batch_size = 128	# the batch size (twice this when testing discriminator)
-max_iter = 5*1000	# the maximum number of steps or epochs
+max_iter = 10*1000	# the maximum number of steps or epochs
 cadence = 100 		# the cadence of output images
 save_models = False	# save the generator and discriminator models
 do_pe = False		# perform parameter estimation? 
@@ -62,7 +62,7 @@ if do_pe==True and Ngauss_sig<=0:
 signal_path = './data/gwbush/*.jpg'
 out_path = '/home/hunter.gabbard/public_html/Burst/mahoGANy'
 
-def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi, mul_range=[1, 2], snr=5):
+def sample_data(n_samples=10000, x_vals=np.arange(0, 5, .1), max_offset=2*np.pi, mul_range=[1, 2], snr=1):
     vectors = []
     for i in range(n_samples):
         offset = np.random.random() * max_offset
@@ -133,7 +133,7 @@ def generator_model():
     # apply another 2D convolution with filter size 5x5 and a tanh activation
     # the output shape should be n_colors x n_pix x n_pix
     model.add(Conv2D(n_colors, (1, 5), padding='same'))
-    model.add(Activation('linear')) # this should be tanh
+    model.add(Activation('tanh')) # this should be tanh
 
     return model
 
@@ -497,7 +497,7 @@ def main():
 
 
     # Generate single noise image
-    noise_image = np.random.normal(0, 5, size=[1, signal_image.shape[1]])
+    noise_image = np.random.normal(0, 0.25, size=[1, signal_image.shape[1]])
 
     # combine signal and noise - this is the measured data i.e., h(t)
     noise_signal = signal_image + noise_image
@@ -533,7 +533,7 @@ def main():
     # This uses a binary cross entropy loss since we are just 
     # discriminating between real and fake signals
     set_trainable(signal_discriminator, True)	# set it back to being trainable
-    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-5, beta_1=0.5), metrics=['accuracy'])
+    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
 
     if do_pe:
         signal_pe.compile(loss='mean_squared_error', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
