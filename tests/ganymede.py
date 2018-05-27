@@ -7,6 +7,7 @@ from keras.layers.convolutional import UpSampling2D
 from keras.layers.convolutional import Conv2D, MaxPooling2D
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.core import Flatten
+from keras.layers.core import Lambda
 from keras import backend as K
 from keras.engine.topology import Layer
 from keras.optimizers import Adam
@@ -29,13 +30,13 @@ mnist_sig = False	# use the mnist dataset in tensorflow?
 Ngauss_sig = 10000	# Number of simple Gaussian blob signals to generate (<=0 means don't use)
 n_colors = 1		# greyscale = 1 or colour = 3
 n_pix = 32		# the rescaled image size (n_pix x n_pix)
-n_sig = 2.0		# the noise standard deviation (if None then use noise images)
+n_sig = 1.0		# the noise standard deviation (if None then use noise images)
 batch_size = 128	# the batch size (twice this when testing discriminator)
 max_iter = 5*1000	# the maximum number of steps or epochs
 cadence = 500 		# the cadence of output images
 save_models = False	# save the generator and discriminator models
 do_pe = True		# perform parameter estimation? 
-pe_cadence = 100  	# the cadence of PE outputs
+pe_cadence = 500  	# the cadence of PE outputs
 npar = 2 		# the number of parameters to estimate
 blob_scale = 0.15	# the scale of the Gaussian blob widths (image spans 0-1)
 
@@ -59,6 +60,13 @@ if do_pe==True and Ngauss_sig<=0:
 # the locations of signal files and output directory
 signal_path = './data/gwbush/*.jpg'
 out_path = '/data/public_html/chrism/GenNet/tests'
+
+def PermaDropout(rate):
+    """
+    A dropout layer that works diuring training AND testing
+    Taken from https://stackoverflow.com/questions/47787011/how-to-disable-dropout-while-prediction-in-keras
+    """
+    return Lambda(lambda x: K.dropout(x, level=rate))
 
 class MyLayer(Layer):
     """
@@ -153,6 +161,42 @@ def signal_pe_model():
     # we now use a dense layer with 1024 outputs and a tanh activation
     model.add(Dense(1024))
     model.add(Activation('tanh'))
+
+    # the final dense layer has a linear activation and 2 outputs
+    # we are currently testing with only 2 outputs - can be generalised
+    model.add(Dense(2))
+    model.add(Activation('linear'))
+
+    return model
+
+def signal_dropout_pe_model():
+    """
+    The PE network that learns how to convert images into parameters
+    This version uses dropout in the testing stage to output different realisations
+    """
+    dropout = 0.5
+    model = Sequential()
+
+    # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
+    # the activation is tanh and we apply a 2x2 max pooling
+    model.add(Conv2D(64, (5, 5), input_shape=(n_pix, n_pix, n_colors), padding='same'))
+    model.add(Activation('tanh'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(PermaDropout(dropout))
+
+    # the next layer is another 2D convolution with 128 neurons and a 5x5
+    # filter. More 2x2 max pooling and a tanh activation. The output is flattened
+    # for input to the next dense layer
+    model.add(Conv2D(128, (5, 5)))
+    model.add(Activation('tanh'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Flatten())
+    model.add(PermaDropout(dropout))
+
+    # we now use a dense layer with 1024 outputs and a tanh activation
+    model.add(Dense(1024))
+    model.add(Activation('tanh'))
+    model.add(PermaDropout(dropout))
 
     # the final dense layer has a linear activation and 2 outputs
     # we are currently testing with only 2 outputs - can be generalised
@@ -356,7 +400,8 @@ def plot_losses(losses,filename,logscale=False,legend=None):
     
     # plot accuracies
     ax2 = fig.add_subplot(212)
-    ax2.plot(logit(losses[:,1]),'b')
+    if losses.shape[1]>1:
+        ax2.plot(logit(losses[:,1]),'b')
     if losses.shape[1]>3:
         ax2.plot(logit(losses[:,3]),'r')
     if losses.shape[1]>5:
@@ -455,6 +500,10 @@ def main():
     signal_train_images, signal_train_pars = load_images(signal_path,mnist=mnist_sig,Nsig=Ngauss_sig)
     signal_train_out = combine_images(signal_train_images)
     signal_train_out.save('%s/signal_train.png' % out_path)
+    if do_pe:
+	tmp_signal_images, signal_train_noisy_pars = load_images(signal_path,mnist=mnist_sig,Nsig=Ngauss_sig)	
+	tmp_noise_images = np.random.normal(0.0,n_sig,size=(Ngauss_sig,n_pix,n_pix,n_colors))
+        signal_train_noisy_images = np.array([a + b for a,b in zip(tmp_signal_images,tmp_noise_images)]).reshape(Ngauss_sig,n_pix,n_pix,n_colors)
 
     # randomly extract single image as the true signal
     # IMPORTANT - make sure to delete it from the training set
@@ -485,6 +534,7 @@ def main():
     generator = generator_model()
     if do_pe:
         signal_pe = signal_pe_model()    
+	signal_dropout_pe = signal_dropout_pe_model()
 
     # setup generator training for when we subtract from the 
     # measured data and expect Gaussian residuals.
@@ -505,7 +555,8 @@ def main():
     signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=0.0002, beta_1=0.5), metrics=['accuracy'])
 
     if do_pe:
-        signal_pe.compile(loss='mean_squared_error', optimizer=Adam(lr=0.0002, beta_1=0.5), metrics=['accuracy'])
+        signal_pe.compile(loss='mean_squared_error', optimizer=Adam(lr=0.0002, beta_1=0.5))
+        signal_dropout_pe.compile(loss='mean_squared_error', optimizer=Adam(lr=0.0002, beta_1=0.5))
 
     # print the model summaries
     print(generator.summary())
@@ -514,6 +565,7 @@ def main():
     print(signal_discriminator.summary())
     if do_pe:
         print(signal_pe.summary())
+	print(signal_dropout_pe.summary())
 
     ################################################
     # DO PARAMETER ESTIMATION ######################
@@ -532,6 +584,39 @@ def main():
         plot_pe_samples(None,signal_pars[0],L,'%s/pe_truelike.png' % out_path)
         print('Completed true grid PE')
 
+	# train the dropout version of PE
+	dropout_pe_losses = []         # initialise the losses for plotting
+	for i in range(10000):
+	
+	    # get random batch from noisy training images
+            idx = random.sample(np.arange(signal_train_noisy_images.shape[0]),batch_size)
+            signal_batch_noisy_images = signal_train_noisy_images[idx]
+            signal_batch_noisy_pars = signal_train_noisy_pars[idx]
+
+	    # train only the signal PE model on the data
+            dropout_pe_loss = signal_dropout_pe.train_on_batch(signal_batch_noisy_images,signal_batch_noisy_pars)
+            dropout_pe_losses.append([dropout_pe_loss])
+
+	    # output status and save images
+            if ((i % pe_cadence == 0) & (i>0)):
+
+                # plot loss curves - non-log and log
+                plot_losses(dropout_pe_losses,'%s/dropout_pe_losses.png' % out_path,legend=['DO-PE-GEN'])
+                plot_losses(dropout_pe_losses,'%s/dropout_pe_losses_logscale.png' % out_path,logscale=True,legend=['DO-PE-GEN'])
+
+                # plot true vs predicted values for all training data
+                dropout_pe_samples = signal_dropout_pe.predict(signal_train_noisy_images)
+		plot_pe_accuracy(signal_train_noisy_pars,dropout_pe_samples,'%s/dropout_pe_accuracy%05d.png' % (out_path,i))
+
+                pe_mesg = "PE (dropout) %d: [PE loss: %f]" % (i, dropout_pe_loss)
+                print(pe_mesg)
+
+	# generate dropout samples
+        dropout_pe_samples = []
+	dropout_pe_samples.append([signal_dropout_pe.predict(noise_signal) for _ in range(1000)])
+        plot_pe_samples(np.array(dropout_pe_samples).reshape(1000,npar),signal_pars[0],L,'%s/dropout_pe_samples.png' % out_path)	
+
+        # now work on the noise free training
         pe_losses = []         # initialise the losses for plotting
         i = 0
         rms = [1.0,1.0]
@@ -544,7 +629,7 @@ def main():
 
             # train only the signal PE model on the data
             pe_loss = signal_pe.train_on_batch(signal_batch_images,signal_batch_pars)
-	    pe_losses.append(pe_loss)
+	    pe_losses.append([pe_loss])
 
 	    # output status and save images
             if ((i % pe_cadence == 0) & (i>0)):
@@ -560,7 +645,7 @@ def main():
 	        # compute RMS difference
                 rms = [np.mean((signal_train_pars[:,k]-pe_samples[:,k])**2) for k in np.arange(2)]
 
-                pe_mesg = "%d: [PE loss: %f, acc: %f, RMS: %f,%f]" % (i, pe_loss[0], pe_loss[1], rms[0], rms[1])
+                pe_mesg = "PE (noise free) %d: [PE loss: %f, RMS: %f,%f]" % (i, pe_loss, rms[0], rms[1])
                 print(pe_mesg)
 
             i += 1
@@ -603,7 +688,7 @@ def main():
 
 	# output status and save images
 	if ((i % cadence == 0) & (i>0)) or (i == max_iter):
-            log_mesg = "%d: [sD loss: %f, acc: %f]" % (i, sd_loss[0], sd_loss[1])
+            log_mesg = "GAN (modified) %d: [sD loss: %f, acc: %f]" % (i, sd_loss[0], sd_loss[1])
 	    log_mesg = "%s  [sG loss: %f, acc: %f]" % (log_mesg, sg_loss[0], sg_loss[1])
             log_mesg = "%s  [nG loss: %f, acc: %f]" % (log_mesg, ng_loss[0], ng_loss[1])
             print(log_mesg)
