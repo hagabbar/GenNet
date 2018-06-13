@@ -3,8 +3,8 @@ from keras.layers import Dense
 from keras.layers import Reshape, Dropout
 from keras.layers.core import Activation
 from keras.layers.normalization import BatchNormalization
-from keras.layers.convolutional import UpSampling2D
-from keras.layers.convolutional import Conv2D, MaxPooling2D
+from keras.layers.convolutional import UpSampling2D, UpSampling1D
+from keras.layers.convolutional import Conv2D, MaxPooling2D, Conv1D, MaxPooling1D
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.core import Flatten
 from keras import backend as K
@@ -33,7 +33,7 @@ n_colors = 1		# greyscale = 1 or colour = 3
 n_pix = 50		# the rescaled image size (n_pix x n_pix)
 n_sig = 0.25               # the noise standard deviation (if None then use noise images)
 batch_size = 128	# the batch size (twice this when testing discriminator)
-max_iter = 5*1000	# the maximum number of steps or epochs
+max_iter = 10*1000	# the maximum number of steps or epochs
 cadence = 100 		# the cadence of output images
 save_models = False	# save the generator and discriminator models
 do_pe = False		# perform parameter estimation? 
@@ -106,15 +106,15 @@ def generator_model():
     The generator that should train itself to generate noise free signals
     """
     model = Sequential()
-    act = 'linear'
+    act = 'tanh'
     momentum = 0.8
 
     # the first dense layer converts the input (100 random numbers) into
     # 1024 numbers and outputs with a tanh activation
-    model.add(Dense(128, input_shape=(100,)))
-    model.add(BatchNormalization(momentum=momentum))
+    model.add(Dense(1024, input_shape=(100,)))
+    #model.add(BatchNormalization(momentum=momentum))
     model.add(Activation(act))
-    model.add(LeakyReLU(alpha=0.2))
+    #model.add(LeakyReLU(alpha=0.2))
    
     #model.add(Dense(512))
     #model.add(Activation(act))
@@ -124,26 +124,26 @@ def generator_model():
     # tanh activation function
     model.add(Dense(128 * 1 * 25))
     model.add(Activation(act))
-    model.add(BatchNormalization(momentum=momentum))
-    model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
+    #model.add(LeakyReLU(alpha=0.2))
 
     # then we reshape into a cube, upsample by a factor of 2 in each of
     # 2 dimensions and apply a 2D convolution with filter size 5x5
     # and 64 neurons and again the activation is tanh 
-    model.add(Reshape((1, 25, 128)))
-    model.add(UpSampling2D(size=(1, 2)))
-    model.add(Conv2D(64, (1, 3), padding='same'))
-    model.add(BatchNormalization(momentum=momentum))
+    model.add(Reshape((25, 128)))
+    model.add(UpSampling1D(size=2))
+    model.add(Conv1D(64, 5, padding='same'))
+    #model.add(BatchNormalization(momentum=momentum))
     model.add(Activation(act))
-    model.add(LeakyReLU(alpha=0.2))
-    model.add(Dropout(0.5))
+    #model.add(LeakyReLU(alpha=0.2))
+    #model.add(Dropout(0.5))
 
     # if we have a 64x64 pixel dataset then we upsample once more 
     #if n_pix==64:
     #    model.add(UpSampling2D(size=(1, 2)))
     # apply another 2D convolution with filter size 5x5 and a tanh activation
     # the output shape should be n_colors x n_pix x n_pix
-    model.add(Conv2D(n_colors, (1, 5), padding='same'))
+    model.add(Conv1D(n_colors, 5, padding='same'))
     model.add(Activation('tanh')) # this should be tanh
 
     return model
@@ -154,7 +154,7 @@ def data_subtraction_model(noise_signal):
     You must pass it the measured image
     """
     model = Sequential()
-    model.add(MyLayer(noise_signal,input_shape=(1, n_pix, n_colors)))
+    model.add(MyLayer(noise_signal,input_shape=(50,1))) # used to be another element for n_colors
    
     return model
 
@@ -194,31 +194,30 @@ def signal_discriminator_model():
     The discriminator that should train itself to recognise generated signals
     from real signals
     """
-    act='linear'
+    act='tanh'
     momentum=0.8
 
     model = Sequential()
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
-    model.add(Conv2D(64, (1, 5), strides=(1,2), input_shape=(1, n_pix, n_colors), padding='same'))
+    model.add(Conv1D(64, 5, strides=1, input_shape=(n_pix,1), padding='same'))
     model.add(Activation(act))
-    model.add(LeakyReLU(alpha=0.2))
-    #model.add(MaxPooling2D(pool_size=(1, 2)))
+    #model.add(LeakyReLU(alpha=0.2))
+    model.add(MaxPooling1D(pool_size=2))
 
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv2D(128, (1, 5)))
-    model.add(BatchNormalization(momentum=momentum))
+    model.add(Conv1D(128, 5))
     model.add(Activation(act))
-    model.add(LeakyReLU(alpha=0.2))
-    #model.add(MaxPooling2D(pool_size=(1, 2)))
+    #model.add(LeakyReLU(alpha=0.2))
+    model.add(MaxPooling1D(pool_size=2))
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
-    #model.add(Dense(1024))
-    #model.add(Activation('tanh'))
+    model.add(Dense(1024))
+    model.add(Activation(act))
 
     # the final dense layer has a sigmoid activation and a single output
     model.add(Dense(1))
@@ -506,7 +505,7 @@ def main():
     # randomly extract single image as the true signal
     # IMPORTANT - make sure to delete it from the training set
     #i = np.random.randint(0,signal_train_images.shape[0],size=1)
-    signal_image = sample_data(1)
+    signal_image= sample_data(1)
     #signal_train_images = np.delete(signal_train_images,i,axis=0)
     if do_pe:
         signal_pars = signal_train_pars[i,:]
@@ -517,7 +516,7 @@ def main():
     noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[1]])
 
     # combine signal and noise - this is the measured data i.e., h(t)
-    noise_signal = signal_image + noise_image
+    noise_signal = np.transpose(signal_image + noise_image)
 
     # output combined true signal and noise image - normalise between -1,1 *ONLY* for plotting
     #tmp = np.array([signal_image,noise_image,renorm(noise_signal)]).reshape(3,n_pix,n_pix,n_colors)
@@ -544,13 +543,13 @@ def main():
     # setup generator training when we pass the output to the signal discriminator
     signal_discriminator_on_generator = generator_containing_signal_discriminator(generator, signal_discriminator)
     set_trainable(signal_discriminator, False)	# set the discriminator as not trainable for this step
-    signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=2e-3, beta_1=0.5), metrics=['accuracy'])
+    signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
 
     # setup trainin on signal discriminator model
     # This uses a binary cross entropy loss since we are just 
     # discriminating between real and fake signals
     set_trainable(signal_discriminator, True)	# set it back to being trainable
-    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=2e-3, beta_1=0.5), metrics=['accuracy'])
+    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
 
     if do_pe:
         signal_pe.compile(loss='mean_squared_error', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
@@ -629,7 +628,7 @@ def main():
         generated_images = generator.predict(noise)
 
 	# make set of real and fake signal mages with labels
-        signal_batch_images = np.reshape(signal_batch_images, (signal_batch_images.shape[0], 1, signal_batch_images.shape[1], 1))
+        signal_batch_images = np.reshape(signal_batch_images, (signal_batch_images.shape[0], signal_batch_images.shape[1], 1))
         sX = np.concatenate((signal_batch_images, generated_images))
         sy = [1] * batch_size + [0] * batch_size
 
@@ -661,7 +660,7 @@ def main():
             f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharey=True)
             ax = signal_image
             ax1.plot(ax[0], color='cyan', linewidth=0.5)
-            ax1.plot(noise_signal[0], color='green', linewidth=0.5)
+            ax1.plot(noise_signal, color='green', linewidth=0.5)
             ax1.set_title('signal + (sig+noise)')
 
             # plot all noise training samples
@@ -669,19 +668,19 @@ def main():
             ax2.set_title('Noise Samples')
             
             # plotable generated signals
-            gen_sig = np.reshape(generated_images[:N_VIEWED], (generated_images[:N_VIEWED].shape[0],generated_images[:N_VIEWED].shape[2]))
+            gen_sig = np.reshape(generated_images[:N_VIEWED], (generated_images[:N_VIEWED].shape[0],generated_images[:N_VIEWED].shape[1]))
 
             # plot generated signals - first image is the noise-free true signal
             ax3.plot(signal_image[0], color='cyan', linewidth=0.5)
             ax3.plot(np.transpose(gen_sig), color='blue', alpha=0.25, linewidth=0.5)
-            ax3.plot(noise_signal[0], color='green', linewidth=0.5)
+            ax3.plot(noise_signal, color='green', linewidth=0.5)
             ax3.set_title('gen + sig + (sig+noise)')
 	    #image = combine_images(generated_images,extra=signal_image.reshape(n_pix,n_pix,n_colors))
             #image.save('%s/gen_signal%05d.png' % (out_path,i))
 	    
 	    # plot residuals - generated images subtracted from the measured image
             # the first image is the true noise realisation
-            residuals = np.transpose(noise_signal-gen_sig)
+            residuals = np.transpose(noise_signal-np.transpose(gen_sig))
             ax4.plot((residuals), color='red', alpha=0.25, linewidth=0.5)
             ax4.set_title('Residuals')
             #image = combine_images(renorm(noise_signal-generated_images),extra=noise_image.reshape(n_pix,n_pix,n_colors)) 
