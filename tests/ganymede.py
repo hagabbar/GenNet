@@ -25,6 +25,9 @@ import glob
 import random
 import string
 
+# original verison based on scripts found at
+# https://github.com/elm200/image-generator-with-keras-dcgan
+
 # define some global params
 mnist_sig = False	# use the mnist dataset in tensorflow?
 Ngauss_sig = 10000	# Number of simple Gaussian blob signals to generate (<=0 means don't use)
