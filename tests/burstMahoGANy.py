@@ -33,7 +33,7 @@ Ngauss_sig = 1000	# Number of GW signals to use (<=0 means don't use)
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 512	        # the rescaled image size (n_pix x n_pix)
 n_sig = 0.25            # the noise standard deviation (if None then use noise images)
-batch_size = 128	# the batch size (twice this when testing discriminator)
+batch_size = 64	        # the batch size (twice this when testing discriminator)
 max_iter = 5*1000	# the maximum number of steps or epochs
 cadence = 1 		# the cadence of output images
 save_models = False	# save the generator and discriminator models
@@ -625,11 +625,10 @@ def main():
 
 	# get random batch from images, should be real signals
         signal_batch_images = np.array(random.sample(signal_train_images, batch_size))
-        for j in signal_batch_images:
-            plt.plot(j, alpha=0.5)
-        plt.savefig('%s/training_waveforms.png' % out_path, dpi=750)
-        plt.close()
-        exit()
+        #for j in signal_batch_images:
+        #    plt.plot(j, alpha=0.5)
+        #plt.savefig('%s/training_waveforms.png' % out_path, dpi=750)
+        #plt.close()
         
 	# first use the generator to make fake images - this is seeded with a size 100 random vector
         noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
@@ -688,7 +687,7 @@ def main():
 	    
 	    # plot residuals - generated images subtracted from the measured image
             # the first image is the true noise realisation
-            residuals = np.transpose(noise_signal-np.transpose(gen_sig))
+            residuals = noise_signal-np.transpose(gen_sig)
             ax4.plot((residuals), color='red', alpha=0.25, linewidth=0.5)
             ax4.set_title('Residuals')
             #image = combine_images(renorm(noise_signal-generated_images),extra=noise_image.reshape(n_pix,n_pix,n_colors)) 
