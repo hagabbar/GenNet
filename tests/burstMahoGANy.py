@@ -59,22 +59,30 @@ if do_pe==True and Ngauss_sig<=0:
 
 # the locations of signal files and output directory
 signal_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data.pkl'
+pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
 out_path = '/home/hunter.gabbard/public_html/Burst/mahoGANy/burst_results'
 
 
-def load_data(signal_path,Ngauss_sig):
+def load_data(signal_path,pars_path,Ngauss_sig):
     """
     Truncates input GW waveform data file into a numpy array called data.
     """
     print('Using data for: {0}'.format(signal_path))
+    print('Using parameters for: {0}'.format(pars_path)
 
-    #load in dataset 0
+    # load in time series dataset
     with open(signal_path, 'rb') as rfp:
         data = pickle.load(rfp)
 
     data = data[:Ngauss_sig]
 
-    return data
+    # load in parameter dataset
+    with open(pars_path, 'rb') as rfp:
+        pars = pickle.load(rfp)
+
+    pars = pars[:Ngauss_sig]
+
+    return data, pars
 
 class MyLayer(Layer):
     """
