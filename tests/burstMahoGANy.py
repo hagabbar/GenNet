@@ -498,9 +498,15 @@ def main():
     
     
     # load signal training images and save examples
-    signal_train_images = load_data(signal_path,Ngauss_sig)
+    signal_train_images, signal_train_pars = load_data(signal_path,pars_path,Ngauss_sig)
     #signal_train_out = combine_images(signal_train_images)
     #signal_train_out.save('%s/signal_train.png' % out_path)
+
+    # not really sure what this is for???
+    if do_pe:
+	tmp_signal_images, signal_train_noisy_pars = load_data(signal_path,pars_path,Ngauss_sig)	
+	tmp_noise_images = np.random.normal(0.0,n_sig,size=(Ngauss_sig,1,n_pix,n_colors))
+        signal_train_noisy_images = np.array([a + b for a,b in zip(tmp_signal_images,tmp_noise_images)]).reshape(Ngauss_sig,1,n_pix,n_colors)
    
     """ 
     # print out input waveforms
