@@ -8,6 +8,13 @@ import argparse
 import glob
 import pickle
 from scipy.signal import resample
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from sys import exit
+import tarfile
+from contextlib import closing
+from minke import mdctools
 
 def get_args():
     parser = argparse.ArgumentParser(prog='nn.py', description='Generative Adversarial Neural Network in keras with tensorflow')
@@ -17,39 +24,69 @@ def get_args():
                         help='directory where data txt files are stored in. Please provide FULL path.')
     parser.add_argument('--n-samples', type=int, default='1000',
                         help='number of waveforms and noise samples to train over (e.g. 10000 would mean 10000 noise and 10000 waveforms signals, 20000 in total.')
-
+    parser.add_argument('--pardir', type=str, default='/home/hunter.gabbard/Burst/rricard_gan/data/data/sg/F70Q100-elliptical',
+                        help='directory where data parameter xml files are stored in. Please provide FULL path.')
     return parser.parse_args()
 
-def load_data(path,n_samples):
+def load_data(data_path,pars_path,n_samples):
     """
     Loads txt files into a numpy array called data.
     """
-    for counter,filename in enumerate(glob.iglob('%s/*.txt' % path)):
-        print("Loading waveform #{}".format(counter))
-        if counter == 0:
-            data = np.loadtxt(filename)
-            data = resample(data, 8192)
-            data /= np.max(data)
-            # plot first waveform in training set
-            #plt.plot(data)
-            #plt.savefig('/home/hunter.gabbard/public_html/Burst/sine-gaussian_runs/resampled_waveform.png')
-            #plt.close()
-        elif counter == n_samples:
-            break
-        else:
-            data_new = np.loadtxt(filename)
-            data_new = resample(data_new, 8192)
-            data_new /= np.max(data_new)
-            data = np.vstack((data,data_new))
+    # load xml file containing all waveform parameters
+    for _,xml_filename in enumerate(glob.iglob('%s/*.xml' % pars_path)):
+        print("Loading xml file: {}".format(xml_filename))
+        data_pars = np.array([])
+        mdcset = mdctools.MDCSet(['H1'])
+        mdcset.load_xml(xml_filename) 
 
+        # load each waveform txt time series file
+        for counter,filename in enumerate(glob.iglob('%s/*.txt' % data_path)):
+            print("Loading waveform #{}".format(counter))
+            offset = int(np.random.uniform(-100,100)) # vary position of waveform
+            if counter == 0:
+                data = np.loadtxt(filename)
+                data = resample(data, 512)
+                data /= np.max(data)
+                data = np.roll(data,offset)
 
-    return data
+                # store parameters in array
+                data_pars = np.array([(512/2)+offset,mdcset.waveforms[counter].frequency])
+
+                # plot first waveform in training set
+                plt.close()
+                #plt.plot(data)
+                #plt.savefig('/home/hunter.gabbard/public_html/Burst/sine-gaussian_runs/resampled_waveform.png')
+                #plt.close()
+            elif counter == n_samples:
+                break
+            else:
+                data_new = np.loadtxt(filename)
+                data_new = resample(data_new, 512)
+                data_new /= np.max(data_new)
+                data_new = np.roll(data_new,offset)
+                # plot next waveform in training set
+                #plt.plot(data_new)
+                #plt.savefig('/home/hunter.gabbard/public_html/Burst/sine-gaussian_runs/resampled_waveform.png')
+                data = np.vstack((data,data_new))
+
+                # store waveforms parameters in array
+                data_pars = np.vstack((data_pars, [(512/2)+offset,mdcset.waveforms[counter].frequency]))
+
+                
+
+    return data, data_pars
 
 args = get_args()
 
-data = load_data(args.datadir,args.n_samples)
+# load both the waveforms and its parameters
+data, data_pars = load_data(args.datadir,args.pardir,args.n_samples)
 
 # dump data in a pickle file
 pickle_out = open("data.pkl", "wb")
 pickle.dump(data, pickle_out)
+pickle_out.close()
+
+# dump pars in a pickle file
+pickle_out = open("data_pars.pkl", "wb")
+pickle.dump(data_pars, pickle_out)
 pickle_out.close()
