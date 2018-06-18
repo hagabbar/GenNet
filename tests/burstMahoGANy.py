@@ -40,7 +40,7 @@ cadence = 1 		# the cadence of output images
 save_models = True	# save the generator and discriminator models
 do_pe = True		# perform parameter estimation? 
 pe_cadence = 5  	# the cadence of PE outputs
-pe_grain = 50           # fineness of pe posterior grid
+pe_grain = 25           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 blob_scale = 0.15	# the scale of the Gaussian blob widths (image spans 0-1)
 N_VIEWED = 25           # number of samples to view when plotting
@@ -489,6 +489,7 @@ def plot_pe_samples(pe_samples,truth,like,outfile,all_pars):
     """
     fig = plt.figure()
     ax1 = fig.add_subplot(111)
+    
     if like is not None:
         # compute enclose probability contours
         enc_post = get_enclosed_prob(like,1.0/pe_grain)
@@ -502,12 +503,13 @@ def plot_pe_samples(pe_samples,truth,like,outfile,all_pars):
         ax1.contour(X, Y, enc_post, [1.0-0.99], colors='b',linestyles='dotted') 
     if pe_samples is not None:
         ax1.plot(pe_samples[:,0],pe_samples[:,1],'.r',markersize=0.8)
-    ax1.plot([truth[0],truth[0]],[np.min(all_pars[:,0]),np.max(all_pars[:,0])],'-k')
-    ax1.plot([np.min(all_pars[:,1]),np.max(all_pars[:,1])],[truth[1],truth[1]],'-k')
+    
+    ax1.plot([truth[0],truth[0]],[np.min(all_pars[:,1]),np.max(all_pars[:,1])],'-k')
+    ax1.plot([np.min(all_pars[:,0]),np.max(all_pars[:,0])],[truth[1],truth[1]],'-k')
     ax1.set_xlabel(r'Parameter 1')
     ax1.set_ylabel(r'Parameter 2')
-    ax1.set_xlim([0,np.max(truth)])
-    ax1.set_ylim([0,np.max(truth)])
+    ax1.set_xlim([np.min(all_pars[:,0]),np.max(all_pars[:,0])])
+    ax1.set_ylim([np.min(all_pars[:,1]),np.max(all_pars[:,1])])
     plt.savefig(outfile)
     plt.close('all')
 
@@ -577,7 +579,7 @@ def main():
     noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[1]])
 
     # combine signal and noise - this is the measured data i.e., h(t)
-    noise_signal = np.transpose(signal_image + noise_image)
+    noise_signal = signal_image + noise_image
 
     # output combined true signal and noise image - normalise between -1,1 *ONLY* for plotting
     #tmp = np.array([signal_image,noise_image,renorm(noise_signal)]).reshape(3,n_pix,n_pix,n_colors)
@@ -637,7 +639,7 @@ def main():
         for count,pars in enumerate(xy): # used to be x
             template,_ = make_burst_waveforms(1,freq=pars[1],t_0=pars[0],rand=False) #.reshape(1,n_pix)
 	    L.append(-0.5*np.sum(((noise_signal-template)/n_sig)**2))
-        L = np.array(L).transpose()
+        L = np.array(L).reshape(pe_grain,pe_grain).transpose()
         L = np.exp(L-np.max(L))
         plot_pe_samples(None,signal_pars[0],L,'%s/pe_truelike.png' % out_path,signal_train_pars)
         print('Completed true grid PE')
