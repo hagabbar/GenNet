@@ -643,12 +643,11 @@ def main():
         L = np.exp(L-np.max(L))
         plot_pe_samples(None,signal_pars[0],L,'%s/pe_truelike.png' % out_path,signal_train_pars)
         print('Completed true grid PE')
-        exit() 
 
         pe_losses = []         # initialise the losses for plotting
         i = 0
         rms = [1.0,1.0]
-        while rms[0]>5e-4 or rms[1]>5e-4:
+        for i in range(5000):
 	
             # get random batch from images
             idx = random.sample(np.arange(signal_train_images.shape[0]),batch_size)
@@ -677,7 +676,7 @@ def main():
                 pe_mesg = "%d: [PE loss: %f, acc: %f, RMS: %f,%f]" % (i, pe_loss[0], pe_loss[1], rms[0], rms[1])
                 print(pe_mesg)
 
-            i += 1
+            
  
         print('Completed CNN PE')
 
@@ -779,7 +778,7 @@ def main():
             plot_losses(losses,'%s/losses.png' % out_path,legend=['S-GEN','S-DIS','N-GEN'])
             #plot_losses(losses,'%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS','N-GEN'])
 
-            """
+            
 	    # plot posterior samples
             if do_pe:
                 # first use the generator to make MANY fake images
@@ -787,7 +786,7 @@ def main():
         	more_generated_images = generator.predict(noise)
                 pe_samples = signal_pe.predict(more_generated_images)
                 plot_pe_samples(pe_samples,signal_pars[0],L,'%s/pe_samples%05d.png' % (out_path,i))
-            """
+            
 
 	    # save trained models
             if save_models:
