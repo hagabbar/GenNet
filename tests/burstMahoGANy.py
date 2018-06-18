@@ -22,6 +22,7 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import glob
 import random
+from random import randint
 import string
 from sys import exit
 import pandas as pd
@@ -36,9 +37,10 @@ n_sig = 0.25            # the noise standard deviation (if None then use noise i
 batch_size = 64	        # the batch size (twice this when testing discriminator)
 max_iter = 5*1000	# the maximum number of steps or epochs
 cadence = 1 		# the cadence of output images
-save_models = False	# save the generator and discriminator models
-do_pe = False		# perform parameter estimation? 
-pe_cadence = 100  	# the cadence of PE outputs
+save_models = True	# save the generator and discriminator models
+do_pe = True		# perform parameter estimation? 
+pe_cadence = 5  	# the cadence of PE outputs
+pe_grain = 50           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 blob_scale = 0.15	# the scale of the Gaussian blob widths (image spans 0-1)
 N_VIEWED = 25           # number of samples to view when plotting
@@ -58,17 +60,59 @@ if do_pe==True and Ngauss_sig<=0:
     exit(0)
 
 # the locations of signal files and output directory
-signal_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data.pkl'
-pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
+#signal_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data.pkl'
+#pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
 out_path = '/home/hunter.gabbard/public_html/Burst/mahoGANy/burst_results'
 
+def make_burst_waveforms(N_sig,amp=1,freq=100,dt=1.0/512.0,N=512.0,t_0=0.5,phi=(2*np.pi),tau=(1.0/15.0), rand=False):
+    # iterate over disired number of signals to generate
+
+    if rand==True:
+        # fix all parameters except for t0 and freq
+        for i in range(N_sig):
+            # randomize t0 and freq
+            t_0 = np.random.uniform(0.25,0.75)
+            freq = np.random.uniform(100,200)
+
+            # define time series
+            t = dt * np.arange(0,N,1)
+
+            # define h_t for sine-Gaussian waveform
+            h_t = amp * np.sin(2*np.pi*freq*(t-t_0)+phi) * np.exp(-(t-t_0)**2/(tau**2)) 
+ 
+            if i == 0:
+                # make initial array
+                data = np.array(h_t)
+                pars = np.array([t_0,freq])
+            else:
+                # append h_t to array
+                data = np.vstack((data,h_t))
+                pars = np.vstack((pars,[t_0,freq]))
+
+    elif rand==False:
+        for i in range(N_sig):
+            # define time series
+            t = dt * np.arange(0,N,1)
+
+            # define h_t for sine-Gaussian waveform
+            h_t = amp * np.sin(2*np.pi*freq*(t-t_0)+phi) * np.exp(-(t-t_0)**2/(tau**2))
+
+            if i == 0:
+                # make initial array
+                data = np.array(h_t)
+                pars = np.array([t_0,freq])
+            else:
+                # append h_t to array
+                data = np.vstack((data,h_t))
+                pars = np.vstack((pars,[t_0,freq]))
+    return data, pars
 
 def load_data(signal_path,pars_path,Ngauss_sig):
     """
     Truncates input GW waveform data file into a numpy array called data.
     """
     print('Using data for: {0}'.format(signal_path))
-    print('Using parameters for: {0}'.format(pars_path)
+    print('Using parameters for: {0}'.format(pars_path))
 
     # load in time series dataset
     with open(signal_path, 'rb') as rfp:
@@ -176,14 +220,14 @@ def signal_pe_model():
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
-    model.add(Conv2D(64, (1, 5), strides=(1,2), input_shape=(n_pix, n_pix, n_colors), padding='same'))
+    model.add(Conv1D(64, 5, strides=2, input_shape=(n_pix,1), padding='same'))
     model.add(Activation('tanh'))
     #model.add(MaxPooling2D(pool_size=(1, 2)))
 
     # the next layer is another 2D convolution with 128 neurons and a 5x5
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv2D(128, (1, 5), strides=(1,2)))
+    model.add(Conv1D(128, 5, strides=2))
     model.add(Activation('tanh'))
     #model.add(MaxPooling2D(pool_size=(1, 2)))
     model.add(Flatten())
@@ -424,22 +468,22 @@ def plot_pe_accuracy(true_pars,est_pars,outfile):
     fig = plt.figure()
     ax1 = fig.add_subplot(121,aspect=1.0)
     ax1.plot(true_pars[:,0],est_pars[:,0],'.b')
-    ax1.plot([0,1],[0,1],'--k')
+    ax1.plot([0,np.max(true_pars[:,0])],[0,np.max(true_pars[:,0])],'--k')
     ax1.set_xlabel(r'True parameter 1')
     ax1.set_ylabel(r'Estimated parameter 1')
-    ax1.set_xlim([0,1])
-    ax1.set_ylim([0,1])
+    ax1.set_xlim([0,np.max(true_pars[:,0])])
+    ax1.set_ylim([0,np.max(true_pars[:,0])])
     ax2 = fig.add_subplot(122,aspect=1.0)
     ax2.plot(true_pars[:,1],est_pars[:,1],'.b')
-    ax2.plot([0,1],[0,1],'--k')
+    ax2.plot([0,np.max(true_pars[:,1])],[0,np.max(true_pars[:,1])],'--k')
     ax2.set_xlabel(r'True parameter 2')
     ax2.set_ylabel(r'Estimated parameter 2')
-    ax2.set_xlim([0,1])
-    ax2.set_ylim([0,1])
+    ax2.set_xlim([0,np.max(true_pars[:,1])])
+    ax2.set_ylim([0,np.max(true_pars[:,1])])
     plt.savefig(outfile)
     plt.close('all')
 
-def plot_pe_samples(pe_samples,truth,like,outfile):
+def plot_pe_samples(pe_samples,truth,like,outfile,all_pars):
     """
     Makes scatter plot of samples estimated from PE model
     """
@@ -447,9 +491,10 @@ def plot_pe_samples(pe_samples,truth,like,outfile):
     ax1 = fig.add_subplot(111)
     if like is not None:
         # compute enclose probability contours
-        enc_post = get_enclosed_prob(like,1.0/n_pix)
-        x = np.linspace(0,1,n_pix)
-        X, Y = np.meshgrid(x,x)
+        enc_post = get_enclosed_prob(like,1.0/pe_grain)
+        x = np.linspace(np.min(all_pars[:,0]),np.max(all_pars[:,0]),pe_grain)
+        y = np.linspace(np.min(all_pars[:,1]),np.max(all_pars[:,1]),pe_grain)
+        X, Y = np.meshgrid(x,y)
         cmap = plt.cm.get_cmap("Greys")
         ax1.contourf(X, Y, enc_post, 100, cmap=cmap) 
         ax1.contour(X, Y, enc_post, [1.0-0.68], colors='b',linestyles='solid')
@@ -457,12 +502,12 @@ def plot_pe_samples(pe_samples,truth,like,outfile):
         ax1.contour(X, Y, enc_post, [1.0-0.99], colors='b',linestyles='dotted') 
     if pe_samples is not None:
         ax1.plot(pe_samples[:,0],pe_samples[:,1],'.r',markersize=0.8)
-    ax1.plot([truth[0],truth[0]],[0,1],'-k')
-    ax1.plot([0,1],[truth[1],truth[1]],'-k')
+    ax1.plot([truth[0],truth[0]],[np.min(all_pars[:,0]),np.max(all_pars[:,0])],'-k')
+    ax1.plot([np.min(all_pars[:,1]),np.max(all_pars[:,1])],[truth[1],truth[1]],'-k')
     ax1.set_xlabel(r'Parameter 1')
     ax1.set_ylabel(r'Parameter 2')
-    ax1.set_xlim([0,1])
-    ax1.set_ylim([0,1])
+    ax1.set_xlim([0,np.max(truth)])
+    ax1.set_ylim([0,np.max(truth)])
     plt.savefig(outfile)
     plt.close('all')
 
@@ -494,20 +539,20 @@ def main():
     # how it works. Doing that now ...
 
     # setup output directory - make sure it exists
-    os.system('mkdir -p %s' % out_path)     
-    
+    os.system('mkdir -p %s' % out_path) 
+   
     
     # load signal training images and save examples
-    signal_train_images, signal_train_pars = load_data(signal_path,pars_path,Ngauss_sig)
+    signal_train_images, signal_train_pars = make_burst_waveforms(Ngauss_sig,rand=True)
     #signal_train_out = combine_images(signal_train_images)
     #signal_train_out.save('%s/signal_train.png' % out_path)
 
     # not really sure what this is for???
     if do_pe:
-	tmp_signal_images, signal_train_noisy_pars = load_data(signal_path,pars_path,Ngauss_sig)	
-	tmp_noise_images = np.random.normal(0.0,n_sig,size=(Ngauss_sig,1,n_pix,n_colors))
-        signal_train_noisy_images = np.array([a + b for a,b in zip(tmp_signal_images,tmp_noise_images)]).reshape(Ngauss_sig,1,n_pix,n_colors)
-   
+	tmp_signal_images, signal_train_noisy_pars = make_burst_waveforms(Ngauss_sig)	
+	tmp_noise_images = np.random.normal(0.0,n_sig,size=(Ngauss_sig,1,n_pix))
+        signal_train_noisy_images = np.array([a + b for a,b in zip(tmp_signal_images,tmp_noise_images)]) #.reshape(Ngauss_sig,1,n_pix,n_colors)
+
     """ 
     # print out input waveforms
     ax = pd.DataFrame(np.transpose(sample_data(25))).plot(legend=False)
@@ -527,7 +572,6 @@ def main():
     if do_pe:
         signal_pars = signal_train_pars[i,:]
         signal_train_pars = np.delete(signal_train_pars,i,axis=0)    
-
 
     # Generate single noise image
     noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[1]])
@@ -584,17 +628,20 @@ def main():
 
     if do_pe:
 
+        
         # first compute true PE on a grid
-        x = np.linspace(0,1,n_pix)
-        xy = np.array([k for k in itprod(x,x)]).reshape(n_pix*n_pix,2)
+        x = np.linspace(np.min(signal_train_pars[:,0]),np.max(signal_train_pars[:,0]),pe_grain)
+        y = np.linspace(np.min(signal_train_pars[:,1]),np.max(signal_train_pars[:,1]),pe_grain)
+        xy = np.array([k for k in itprod(x,y)]).reshape(len(x)*len(y),2)
         L = []
-        for pars in xy:
-            template = np.array(gen_gauss_signals(1,pars=pars)[0]).reshape(n_pix,n_pix)
-	    L.append(-0.5*np.sum(((noise_signal.reshape(n_pix,n_pix)-template)/n_sig)**2))
-        L = np.array(L).reshape(n_pix,n_pix).transpose()
+        for count,pars in enumerate(xy): # used to be x
+            template,_ = make_burst_waveforms(1,freq=pars[1],t_0=pars[0],rand=False) #.reshape(1,n_pix)
+	    L.append(-0.5*np.sum(((noise_signal-template)/n_sig)**2))
+        L = np.array(L).transpose()
         L = np.exp(L-np.max(L))
-        plot_pe_samples(None,signal_pars[0],L,'%s/pe_truelike.png' % out_path)
+        plot_pe_samples(None,signal_pars[0],L,'%s/pe_truelike.png' % out_path,signal_train_pars)
         print('Completed true grid PE')
+        exit() 
 
         pe_losses = []         # initialise the losses for plotting
         i = 0
@@ -604,6 +651,7 @@ def main():
             # get random batch from images
             idx = random.sample(np.arange(signal_train_images.shape[0]),batch_size)
             signal_batch_images = signal_train_images[idx]
+            signal_batch_images = np.reshape(signal_batch_images, (signal_batch_images.shape[0],signal_batch_images.shape[1],1))
 	    signal_batch_pars = signal_train_pars[idx]
 
             # train only the signal PE model on the data
@@ -618,7 +666,7 @@ def main():
                 #plot_losses(pe_losses,'%s/pe_losses_logscale.png' % out_path,logscale=True,legend=['PE-GEN'])
 
 		# plot true vs predicted values for all training data
-                pe_samples = signal_pe.predict(signal_train_images)
+                pe_samples = signal_pe.predict(np.reshape(signal_train_images, (signal_train_images.shape[0],signal_train_images.shape[1],1)))
 		plot_pe_accuracy(signal_train_pars,pe_samples,'%s/pe_accuracy%05d.png' % (out_path,i))
             
 	        # compute RMS difference
@@ -729,6 +777,7 @@ def main():
             plot_losses(losses,'%s/losses.png' % out_path,legend=['S-GEN','S-DIS','N-GEN'])
             #plot_losses(losses,'%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS','N-GEN'])
 
+            """
 	    # plot posterior samples
             if do_pe:
                 # first use the generator to make MANY fake images
@@ -736,6 +785,7 @@ def main():
         	more_generated_images = generator.predict(noise)
                 pe_samples = signal_pe.predict(more_generated_images)
                 plot_pe_samples(pe_samples,signal_pars[0],L,'%s/pe_samples%05d.png' % (out_path,i))
+            """
 
 	    # save trained models
             if save_models:
