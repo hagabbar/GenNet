@@ -22,7 +22,6 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import glob
 import random
-from random import randint
 import string
 from sys import exit
 import pandas as pd
@@ -31,20 +30,19 @@ from scipy.stats import uniform
 
 # define some global params
 mnist_sig = False	# use the mnist dataset in tensorflow?
-Ngauss_sig = 1000	# Number of GW signals to use (<=0 means don't use)
+Ngauss_sig = 8000	# Number of GW signals to use (<=0 means don't use)
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 512	        # the rescaled image size (n_pix x n_pix)
-n_sig = 0.5            # the noise standard deviation (if None then use noise images)
-batch_size = 64	        # the batch size (twice this when testing discriminator)
-max_iter = 5*1000 	# the maximum number of steps or epochs
-pe_iter = 2*1000        # the maximum number of steps or epochs for pe network 
-cadence = 5		# the cadence of output images
+n_sig = 0.025           # the noise standard deviation (if None then use noise images)
+batch_size = 128	# the batch size (twice this when testing discriminator)
+max_iter = 10*1000 	# the maximum number of steps or epochs
+pe_iter = 1*1000        # the maximum number of steps or epochs for pe network 
+cadence = 10		# the cadence of output images
 save_models = False	# save the generator and discriminator models
-do_pe = True		# perform parameter estimation? 
-pe_cadence = 5  	# the cadence of PE outputs
+do_pe = False		# perform parameter estimation? 
+pe_cadence = 100  	# the cadence of PE outputs
 pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
-blob_scale = 0.15	# the scale of the Gaussian blob widths (image spans 0-1)
 N_VIEWED = 25           # number of samples to view when plotting
 
 # catch input errors
@@ -66,70 +64,29 @@ if do_pe==True and Ngauss_sig<=0:
 #pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
 out_path = '/home/hunter.gabbard/public_html/Burst/mahoGANy/burst_results'
 
-def make_burst_waveforms(N_sig,amp=1,freq=100,dt=1.0/512,N=512,t_0=0.5,phi=2*(np.pi),tau=(1.0/30.0),rand=None):
+def make_burst_waveforms(N_sig,amp=1,freq=100,dt=1.0/512,N=512,t_0=0.5,phi=2*(np.pi),tau=(1.0/30.0),rand5=None):
     # iterate over disired number of signals to generate
+    data = []
+    pars = []
 
-    if rand==True:
-        # fix all parameters except for t0 and freq
-        for i in range(N_sig):
+    # fix all parameters except for t0 and freq
+    for i in range(N_sig):
+        if rand5==True:
             # randomize t0 and freq
-            t_0 = np.random.uniform(0.25,0.75)
-            tau = np.random.uniform(1.0/60.0,1.0/15.0)
-            #t_0 = uniform.rvs(loc=0.25, scale=.5, size=1)          
-            #tau = uniform.rvs(loc=1.0/60.0, scale=1.0/15.0, size=1)
+            t_0 = random.uniform(0.25,0.75)
+            tau = random.uniform(1.0/60.0,1.0/15.0)
+            
 
-            # define time series
-            t = dt * np.arange(0,N,1)
+        # define time series
+        t = dt * np.arange(0,N,1)
 
-            # define h_t for sine-Gaussian waveform
-            h_t = amp * np.sin(2*np.pi*freq*(t-t_0)+phi) * np.exp(-(t-t_0)**2/(tau**2))
+        # define h_t for sine-Gaussian waveform
+        h_t = amp * np.sin(2*np.pi*freq*(t-t_0)+phi) * np.exp(-(t-t_0)**2/(tau**2))
 
-            if i == 0:
-                # make initial array
-                data = np.array(h_t)
-                pars = np.array([t_0,tau])
-            else:
-                # append h_t to array
-                data = np.vstack((data,h_t))
-                pars = np.vstack((pars,[t_0,tau]))
-    else:
-        for i in range(N_sig):
-            # define time series
-            t = dt * np.arange(0,N,1)
-
-            # define h_t for sine-Gaussian waveform
-            h_t = amp * np.sin(2*np.pi*freq*(t-t_0)+phi) * np.exp(-(t-t_0)**2/(tau**2))
-
-            if i == 0:
-                # make initial array
-                data = np.array(h_t)
-                pars = np.array([t_0,tau])
-            else:
-                # append h_t to array
-                data = np.vstack((data,h_t))
-                pars = np.vstack((pars,[t_0,tau]))
-    return data.reshape(N_sig,-1),pars.reshape(N_sig,-1)
-
-def load_data(signal_path,pars_path,Ngauss_sig):
-    """
-    Truncates input GW waveform data file into a numpy array called data.
-    """
-    print('Using data for: {0}'.format(signal_path))
-    print('Using parameters for: {0}'.format(pars_path))
-
-    # load in time series dataset
-    with open(signal_path, 'rb') as rfp:
-        data = pickle.load(rfp)
-
-    data = data[:Ngauss_sig]
-
-    # load in parameter dataset
-    with open(pars_path, 'rb') as rfp:
-        pars = pickle.load(rfp)
-
-    pars = pars[:Ngauss_sig]
-
-    return data, pars
+        data.append(h_t)
+        pars.append([t_0,tau])
+    return np.array(data), np.array(pars)
+    #return np.array(data).reshape(N_sig,-1),np.array(pars).reshape(N_sig,-1)
 
 class MyLayer(Layer):
     """
@@ -179,7 +136,7 @@ def generator_model():
 
     # the second dense layer expands this up to 32768 and again uses a
     # tanh activation function
-    model.add(Dense(128 * 1 * int(n_pix/2)))
+    model.add(Dense(128 * 1 * int(n_pix)))
     model.add(Activation(act))
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(LeakyReLU(alpha=0.2))
@@ -187,10 +144,11 @@ def generator_model():
     # then we reshape into a cube, upsample by a factor of 2 in each of
     # 2 dimensions and apply a 2D convolution with filter size 5x5
     # and 64 neurons and again the activation is tanh 
-    model.add(Reshape((int(n_pix/2), 128)))
-    model.add(UpSampling1D(size=2))
+    model.add(Reshape((int(n_pix), 128)))
+    #model.add(UpSampling1D(size=2))
     model.add(Conv1D(64, 5, padding='same'))
     #model.add(BatchNormalization(momentum=momentum))
+    #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(Dropout(0.5))
@@ -259,23 +217,24 @@ def signal_discriminator_model():
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
-    model.add(Conv1D(64, 5, strides=1, input_shape=(n_pix,1), padding='same'))
+    model.add(Conv1D(64, 5, strides=2, input_shape=(n_pix,1), padding='same'))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(MaxPooling1D(pool_size=2))
+    #model.add(MaxPooling1D(pool_size=2))
 
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv1D(128, 5))
+    model.add(Conv1D(128, 5, strides=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(MaxPooling1D(pool_size=2))
+    #model.add(MaxPooling1D(pool_size=2))
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
     model.add(Dense(1024))
     model.add(Activation(act))
+    #model.add(LeakyReLU(alpha=0.2))
 
     # the final dense layer has a sigmoid activation and a single output
     model.add(Dense(1))
@@ -313,118 +272,6 @@ def renorm(image):
     mean = 0.5*(np.max(image)+np.min(image))
     return (image - mean)/hspan
 
-def load_images(filepath,flip=True,mnist=False,Nsig=0):
-    """
-    This function loads in images from the filepath
-    If flip is True then we make a horizontally flipped copy of each image read in.
-    I mnist is True then we read in mnist data from tensorflow
-    """
-    res = []	# initialise the output 
-
-    # if the mnist flag has been set then read in the mnist data from tensorflow
-    if mnist:
-        data = input_data.read_data_sets("mnist",one_hot=True).train.images
-        data = np.array(data).reshape(-1,28,28,1).astype(np.float32)
-	for tmp in data:
-	    img = Image.fromarray(tmp.squeeze())
-            arr = np.array(img.resize((n_pix, n_pix)))	# resize from 28x28 to n_pix x n_pix
-            res.append(renorm(arr))			# normalise each image to be -1 to 1	
-
-    elif Nsig>0:					# or make fake parameterised Gaussian blob signals    
-
-	# make some Gaussian blob images
-        # these are parameterised so we can do PE with them
-	res,pars = gen_gauss_signals(Nsig)	
-        return np.array(res).reshape(-1,n_pix,n_pix,n_colors), np.array(pars).reshape(-1,npar)
-
-    else:						# otherwise read in from directory
-        files = glob.glob(filepath)			# get filelist from path
-        
-	# loop over files
-	for path in files:
-            img = Image.open(path)			# open file
-            img = img.resize((n_pix, n_pix))		# resize to n_pix x n_pix
-            if n_colors==1:
-                img = img.convert('L')			# if greyscale then convert it 
-	    arr = np.array(img)
-	    #arr = (arr - 127.5) / 127.5
-	    arr = renorm(arr)				# rescale from -1 to 1
-            arr.resize((n_pix, n_pix, n_colors))	# make sure its a 3D object
-            res.append(arr)				# append to the read in images
-	    if flip:
-                res.append(arr[:,::-1,:])   		# add flipped image
-    
-    # return the reshaped array of images
-    return np.array(res).reshape(-1,n_pix,n_pix,n_colors)
-
-def gen_gauss_signals(N=1,pars=None):
-    """
-    This function generates Gaussian blob images with varying location parameters
-    - takes in parameter values if provided (x and y means as fraction of image)
-    """
-
-    # initialise results and set up vector of locations on the image
-    sig = []			# stores the output images
-    params = []			# stores the output parameters (x,y means)
-    cov = (blob_scale**2)*np.eye(2)	# the blob covariance (constant for now)
-    x = np.arange(n_pix)
-    xy = np.array([k for k in itprod(x,x)]).reshape(n_pix*n_pix,2)
-    
-    # loop over each generated signal
-    for _ in range(N):
-        if pars is not None:
-            mean = pars		# if params provided then use them
-        else:
-	    mean = np.random.uniform(0,1.0,size=2)	# else draw random values
-        	
-	# compute Gaussian pdf value at all locations for this choice of mean
-        # also renormalise to [-1,1]
-	sig.append(renorm(mvn.pdf(xy, mean=n_pix*mean, cov=n_pix*n_pix*cov)))
-        params.append([mean[0],mean[1]])	# record the params
-
-    # return the images and the paramneters used to generate them
-    return np.array(sig).reshape(N,n_pix,n_pix,n_colors), np.array(params).reshape(-1,npar)
-
-def combine_images(generated_images, cols=4, rows=4,randomize=True,extra=None):
-    """
-    Function to generate tile plots of images.
-    - cols and rows args set the grid size.
-    - randomize randomly selects the order of the images to plot.
-    - extra points to a special image that gets plotted in the top left tile
-    """
-    
-    # setup the size of the output image
-    shape = generated_images.shape
-    h = shape[1]
-    w = shape[2]
-    image = np.ones((rows * h,  cols * w, n_colors))
-
-    # make index in order or randomize
-    i = np.arange(generated_images.shape[0])
-    if randomize:
-	i = np.random.randint(0,generated_images.shape[0],size=rows*cols)
-    
-    # loop over the images until we've filled each tile
-    # for each iteration we place the image in the correct tile
-    for index, img in enumerate(generated_images[i]):
-        if index >= cols * rows:
-            break
-        i = index // cols
-        j = index % cols
-        image[i*h:(i+1)*h, j*w:(j+1)*w, :] = img[:, :, :]
-
-    # if we want to plot an extra special image then do so in the first tile
-    if extra is not None:
-        image[0:h, 0:w, :] = extra[:, :, :]
-
-    # rescale back to [0,255] range for plotting and # resize to 512 x 512 for 
-    # easy viewing 
-    image = image * 127.5 + 127.5
-    image = Image.fromarray(image.astype(np.uint8).squeeze())
-    image = image.resize([512,512])
-    
-    return image
-
 def plot_losses(losses,filename,logscale=False,legend=None):
     """
     Make loss and accuracy plots and output to file.
@@ -461,7 +308,7 @@ def plot_losses(losses,filename,logscale=False,legend=None):
     if logscale==True:
         ax1.set_xscale("log", nonposx='clip')
         ax2.set_xscale("log", nonposx='clip')
-        ax1.set_yscale("log", nonposx='clip')
+        ax1.set_yscale("log", nonposy='clip')
     plt.savefig(filename)
     plt.close('all')
 
@@ -497,7 +344,6 @@ def plot_pe_samples(pe_samples,truth,like,outfile,x,y):
     if like is not None:
         # compute enclose probability contours
         enc_post = get_enclosed_prob(like,1.0/pe_grain)
-        #enc_post = like
         X, Y = np.meshgrid(x,y)
         cmap = plt.cm.get_cmap("Greys")
         ax1.contourf(X, Y, enc_post, 100, cmap=cmap) 
@@ -515,7 +361,6 @@ def plot_pe_samples(pe_samples,truth,like,outfile,x,y):
     #ax1.set_ylim([np.min(all_pars[:,1]),np.max(all_pars[:,1])])
     plt.savefig(outfile)
     plt.close('all')
-    exit()
 
 def get_enclosed_prob(x,dx):
     """
@@ -537,6 +382,26 @@ def set_trainable(model, trainable):
     for layer in model.layers:
         layer.trainable = trainable
 
+def load_data(data_path,pars_path,Ngauss_sig):
+    """
+    Truncates input GW waveform data file into a numpy array called data.
+    """
+    print('Using data for: {0}'.format(signal_path))
+    print('Using parameters for: {0}'.format(pars_path))
+
+    # load in time series dataset
+    with open(signal_path, 'rb') as rfp:
+        data = pickle.load(rfp)
+
+    data = data[:Ngauss_sig]
+
+    # load in parameter dataset
+    with open(pars_path, 'rb') as rfp:
+        pars = pickle.load(rfp)
+
+    pars = pars[:Ngauss_sig]
+
+    return data,pars
 def main():
 
     ################################################
@@ -549,9 +414,8 @@ def main():
    
     
     # load signal training images and save examples
-    signal_train_images, signal_train_pars = make_burst_waveforms(1,rand=True)
-    #signal_train_out = combine_images(signal_train_images)
-    #signal_train_out.save('%s/signal_train.png' % out_path)
+    signal_train_images, signal_train_pars = make_burst_waveforms(Ngauss_sig,rand5=True)
+    #signal_train_images, signal_train_pars = load_data(signal_path,pars_path,Ngauss_sig)
 
     """
     # not really sure what this is for???
@@ -573,23 +437,34 @@ def main():
 
     # randomly extract single image as the true signal
     # IMPORTANT - make sure to delete it from the training set
-    i = np.random.randint(0,signal_train_images.shape[0],size=1)
-    signal_image = signal_train_images[i,:]
+    #i = np.random.randint(0,signal_train_images.shape[0],size=1)
+    #signal_image = signal_train_images[i,:]
+
+    #signal_fftd = np.fft.rfft(signal_image)[0]
+    #plt.loglog(np.real(signal_fftd*np.conjugate(signal_fftd)))
+    #plt.savefig('%s/fftd_wvfm.png' % out_path)
+    #plt.close()
+
+    # choose fixed signal
+    # pars will be default params in function
+    signal_image,signal_pars=make_burst_waveforms(1)
+
+    # plot input waveform to be pe'd
     plt.plot(signal_image[0]) 
     plt.savefig('%s/input_waveform.png' % out_path)
     plt.close()
-    signal_train_images = np.delete(signal_train_images,i,axis=0)
+    #signal_train_images = np.delete(signal_train_images,i,axis=0)
     
-    if do_pe:
-        signal_pars = signal_train_pars[i,:]
-        print(signal_pars)
-        signal_train_pars = np.delete(signal_train_pars,i,axis=0)    
+    #if do_pe:
+    #    signal_pars = signal_train_pars[i,:]
+    #    print(signal_pars)
+    #    signal_train_pars = np.delete(signal_train_pars,i,axis=0)    
 
     # Generate single noise image
     noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[1]])
 
     # combine signal and noise - this is the measured data i.e., h(t)
-    noise_signal = signal_image #+ noise_image
+    noise_signal = signal_image + noise_image
 
     # output combined true signal and noise image - normalise between -1,1 *ONLY* for plotting
     #tmp = np.array([signal_image,noise_image,renorm(noise_signal)]).reshape(3,n_pix,n_pix,n_colors)
@@ -670,32 +545,9 @@ def main():
         x = np.linspace(0.25,0.75,pe_grain)
         y = np.linspace(1.0/60.0,1.0/15.0,pe_grain)
         xy = np.array([k for k in itprod(x,y)]).reshape(pe_grain*pe_grain,2)
-        
-        #plt.plot(noise_signal[0])
-        #plt.savefig('%s/before.png' % out_path)
-        #plt.close()
-
-        #print(type(x[pe_grain/4]),type(np.random.uniform(0.25,0.75)))
-        #exit()
-
-        #noise_signal,_ = make_burst_waveforms(1,tau=y[pe_grain/4],t_0=x[pe_grain/4],rand=False)
-        
-        #noise_signal,_ = make_burst_waveforms(1,tau=1.0/30.0,t_0=0.5,rand=False)
-
-        #plt.plot(noise_signal)
-        #plt.savefig('%s/after.png' % out_path)
-        #plt.close()
-        tmp_signal,_ = make_burst_waveforms(1,tau=signal_pars[0][1],t_0=signal_pars[0][0],rand=False)
-        #exit()
-        plt.plot(noise_signal[0]-tmp_signal[0], '--b', alpha=0.25)
-        #plt.plot(tmp_signal[0], c='r')
-        plt.savefig('%s/overlayed_waveforms.png' % out_path)
-        plt.close()
-
         L = []
         for count,pars in enumerate(xy): # used to be x
-            template,_ = make_burst_waveforms(1,tau=pars[1],t_0=pars[0],rand=False) #.reshape(1,n_pix)
-            print(noise_signal.shape,template.shape)
+            template,_ = make_burst_waveforms(1,tau=pars[1],t_0=pars[0]) #.reshape(1,n_pix)
 	    L.append(-0.5*np.sum(((noise_signal-template)/n_sig)**2))
         L = np.array(L).reshape(pe_grain,pe_grain).transpose()
         L = np.exp(L-np.max(L))
@@ -706,9 +558,6 @@ def main():
         i = 0
         rms = [1.0,1.0]
         
-        # get max values for both pars to estimate
-        #par0_max = np.max(signal_train_pars[:,0])
-        #par1_max = np.max(signal_train_pars[:,1])
         for i in range(pe_iter):
 	
             # get random batch from images
@@ -718,13 +567,6 @@ def main():
             signal_batch_images /= np.max(signal_batch_images)
 	    signal_batch_pars = signal_train_pars[idx]
 
-            # get max values for both pars to estimate
-            #par0_max_mean = [np.max(signal_batch_pars[:,0]),np.mean(signal_batch_pars[:,0])]
-            #par1_max_mean = [np.max(signal_batch_pars[:,1]),np.mean(signal_batch_pars[:,1])]
-
-            # normalize parameters
-            #signal_batch_pars[:,0] = (signal_batch_pars[:,0] - par0_max_mean[1]) / par0_max_mean[0]
-            #signal_batch_pars[:,1] = (signal_batch_pars[:,1] - par1_max_mean[1]) / par1_max_mean[0]
 
             # train only the signal PE model on the data
             pe_loss = signal_pe.train_on_batch(signal_batch_images,signal_batch_pars)
@@ -735,7 +577,7 @@ def main():
 
 		# plot loss curves - non-log and log
                 plot_losses(pe_losses,'%s/pe_losses.png' % out_path,legend=['PE-GEN'])
-                #plot_losses(pe_losses,'%s/pe_losses_logscale.png' % out_path,logscale=True,legend=['PE-GEN'])
+                plot_losses(pe_losses,'%s/pe_losses_logscale.png' % out_path,logscale=True,legend=['PE-GEN'])
 
 		# plot true vs predicted values for all training data
                 pe_samples = signal_pe.predict(np.reshape(signal_train_images, (signal_train_images.shape[0],signal_train_images.shape[1],1)))
@@ -765,10 +607,6 @@ def main():
 
 	# get random batch from images, should be real signals
         signal_batch_images = np.array(random.sample(signal_train_images, batch_size))
-        #for j in signal_batch_images:
-        #    plt.plot(j, alpha=0.5)
-        #plt.savefig('%s/training_waveforms.png' % out_path, dpi=750)
-        #plt.close()
         
 	# first use the generator to make fake images - this is seeded with a size 100 random vector
         noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
@@ -802,12 +640,16 @@ def main():
 	    log_mesg = "%s  [sG loss: %f, acc: %f]" % (log_mesg, sg_loss[0], sg_loss[1])
             log_mesg = "%s  [nG loss: %f, acc: %f]" % (log_mesg, ng_loss[0], ng_loss[1])
             print(log_mesg)
+
+            #plt.plot(noise_signal[0])
+            #plt.savefig('%s/training_waveforms_%s.png' % (out_path,i), dpi=750)
+            #plt.close()
 	    
             # plot original waveform
             f, (ax1, ax3, ax4) = plt.subplots(3, 1, sharey=True)
             ax = signal_image
-            ax1.plot(ax[0], color='cyan', linewidth=0.5)
-            ax1.plot(noise_signal[0], color='green', linewidth=0.5)
+            ax1.plot(ax[0], color='cyan', alpha=0.5, linewidth=0.5)
+            ax1.plot(noise_signal[0], color='green', alpha=0.35, linewidth=0.5)
             ax1.set_title('signal + (sig+noise)')
 
             # plot all noise training samples
@@ -819,16 +661,16 @@ def main():
 
             # plot generated signals - first image is the noise-free true signal
             ax3.plot(signal_image[0], color='cyan', linewidth=0.5)
-            ax3.plot(np.transpose(gen_sig), color='blue', alpha=0.25, linewidth=0.5)
-            ax3.plot(noise_signal[0], color='green', linewidth=0.5)
+            ax3.plot(np.transpose(gen_sig), color='blue', alpha=0.35, linewidth=0.5)
+            ax3.plot(noise_signal[0], color='green', alpha=0.25, linewidth=0.5)
             ax3.set_title('gen + sig + (sig+noise)')
 	    #image = combine_images(generated_images,extra=signal_image.reshape(n_pix,n_pix,n_colors))
             #image.save('%s/gen_signal%05d.png' % (out_path,i))
 	    
 	    # plot residuals - generated images subtracted from the measured image
             # the first image is the true noise realisation
-            residuals = np.transpose(noise_signal-gen_sig)
-            ax4.plot((residuals), color='red', alpha=0.25, linewidth=0.5)
+            residuals = np.transpose(noise_signal-gen_sig[0])
+            ax4.plot((residuals), color='red', linewidth=0.5)
             ax4.set_title('Residuals')
             #image = combine_images(renorm(noise_signal-generated_images),extra=noise_image.reshape(n_pix,n_pix,n_colors)) 
             #image.save('%s/residual%05d.png' % (out_path,i))
@@ -853,7 +695,7 @@ def main():
 
             # plot loss curves - non-log and log
             plot_losses(losses,'%s/losses.png' % out_path,legend=['S-GEN','S-DIS','N-GEN'])
-            #plot_losses(losses,'%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS','N-GEN'])
+            plot_losses(losses,'%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS','N-GEN'])
 
             
 	    # plot posterior samples
