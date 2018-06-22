@@ -30,10 +30,10 @@ from scipy.stats import uniform
 
 # define some global params
 mnist_sig = False	# use the mnist dataset in tensorflow?
-Ngauss_sig = 8000	# Number of GW signals to use (<=0 means don't use)
+Ngauss_sig = 1000	# Number of GW signals to use (<=0 means don't use)
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 512	        # the rescaled image size (n_pix x n_pix)
-n_sig = 0.025           # the noise standard deviation (if None then use noise images)
+n_sig = 0.25           # the noise standard deviation (if None then use noise images)
 batch_size = 128	# the batch size (twice this when testing discriminator)
 max_iter = 10*1000 	# the maximum number of steps or epochs
 pe_iter = 1*1000        # the maximum number of steps or epochs for pe network 
@@ -60,11 +60,11 @@ if do_pe==True and Ngauss_sig<=0:
     exit(0)
 
 # the locations of signal files and output directory
-#signal_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data.pkl'
-#pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
+signal_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data.pkl'
+pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
 out_path = '/home/hunter.gabbard/public_html/Burst/mahoGANy/burst_results'
 
-def make_burst_waveforms(N_sig,amp=1,freq=100,dt=1.0/512,N=512,t_0=0.5,phi=2*(np.pi),tau=(1.0/30.0),rand5=None):
+def make_burst_waveforms(N_sig,amp=1,freq=100,dt=1.0/512,N=512,t_0=0.5,phi=2*(np.pi),tau=(1.0/15.0),rand5=None):
     # iterate over disired number of signals to generate
     data = []
     pars = []
@@ -136,7 +136,7 @@ def generator_model():
 
     # the second dense layer expands this up to 32768 and again uses a
     # tanh activation function
-    model.add(Dense(128 * 1 * int(n_pix)))
+    model.add(Dense(128 * 1 * int(n_pix/2)))
     model.add(Activation(act))
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(LeakyReLU(alpha=0.2))
@@ -144,8 +144,8 @@ def generator_model():
     # then we reshape into a cube, upsample by a factor of 2 in each of
     # 2 dimensions and apply a 2D convolution with filter size 5x5
     # and 64 neurons and again the activation is tanh 
-    model.add(Reshape((int(n_pix), 128)))
-    #model.add(UpSampling1D(size=2))
+    model.add(Reshape((int(n_pix/2), 128)))
+    model.add(UpSampling1D(size=2))
     model.add(Conv1D(64, 5, padding='same'))
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(MaxPooling1D(pool_size=2))
@@ -178,7 +178,7 @@ def signal_pe_model():
     The PE network that learns how to convert images into parameters
     """
     model = Sequential()
-    act = 'relu'
+    act = 'tanh'
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
@@ -217,18 +217,18 @@ def signal_discriminator_model():
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
-    model.add(Conv1D(64, 5, strides=2, input_shape=(n_pix,1), padding='same'))
+    model.add(Conv1D(64, 5, input_shape=(n_pix,1), padding='same'))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(MaxPooling1D(pool_size=2))
+    model.add(MaxPooling1D(pool_size=2))
 
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv1D(128, 5, strides=2))
+    model.add(Conv1D(128, 5))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(MaxPooling1D(pool_size=2))
+    model.add(MaxPooling1D(pool_size=2))
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
@@ -464,7 +464,7 @@ def main():
     noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[1]])
 
     # combine signal and noise - this is the measured data i.e., h(t)
-    noise_signal = signal_image + noise_image
+    noise_signal = np.transpose(signal_image + noise_image)
 
     # output combined true signal and noise image - normalise between -1,1 *ONLY* for plotting
     #tmp = np.array([signal_image,noise_image,renorm(noise_signal)]).reshape(3,n_pix,n_pix,n_colors)
@@ -649,7 +649,7 @@ def main():
             f, (ax1, ax3, ax4) = plt.subplots(3, 1, sharey=True)
             ax = signal_image
             ax1.plot(ax[0], color='cyan', alpha=0.5, linewidth=0.5)
-            ax1.plot(noise_signal[0], color='green', alpha=0.35, linewidth=0.5)
+            ax1.plot(noise_signal, color='green', alpha=0.35, linewidth=0.5)
             ax1.set_title('signal + (sig+noise)')
 
             # plot all noise training samples
@@ -661,16 +661,17 @@ def main():
 
             # plot generated signals - first image is the noise-free true signal
             ax3.plot(signal_image[0], color='cyan', linewidth=0.5)
-            ax3.plot(np.transpose(gen_sig), color='blue', alpha=0.35, linewidth=0.5)
-            ax3.plot(noise_signal[0], color='green', alpha=0.25, linewidth=0.5)
+            ax3.plot(np.transpose(gen_sig), color='blue', alpha=0.15, linewidth=0.5)
+            ax3.plot(noise_signal, color='green', alpha=0.25, linewidth=0.5)
             ax3.set_title('gen + sig + (sig+noise)')
 	    #image = combine_images(generated_images,extra=signal_image.reshape(n_pix,n_pix,n_colors))
             #image.save('%s/gen_signal%05d.png' % (out_path,i))
 	    
 	    # plot residuals - generated images subtracted from the measured image
             # the first image is the true noise realisation
-            residuals = np.transpose(noise_signal-gen_sig[0])
-            ax4.plot((residuals), color='red', linewidth=0.5)
+            residuals = np.transpose(np.transpose(noise_signal)-gen_sig)
+            ax4.plot((residuals), color='red', alpha=0.25, linewidth=0.5)
+            
             ax4.set_title('Residuals')
             #image = combine_images(renorm(noise_signal-generated_images),extra=noise_image.reshape(n_pix,n_pix,n_colors)) 
             #image.save('%s/residual%05d.png' % (out_path,i))
