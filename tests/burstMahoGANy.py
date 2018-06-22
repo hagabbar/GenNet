@@ -39,7 +39,7 @@ max_iter = 10*1000 	# the maximum number of steps or epochs
 pe_iter = 1*1000        # the maximum number of steps or epochs for pe network 
 cadence = 10		# the cadence of output images
 save_models = False	# save the generator and discriminator models
-do_pe = False		# perform parameter estimation? 
+do_pe = True		# perform parameter estimation? 
 pe_cadence = 100  	# the cadence of PE outputs
 pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
@@ -64,7 +64,7 @@ signal_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data.pkl'
 pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
 out_path = '/home/hunter.gabbard/public_html/Burst/mahoGANy/burst_results'
 
-def make_burst_waveforms(N_sig,amp=1,freq=100,dt=1.0/512,N=512,t_0=0.5,phi=2*(np.pi),tau=(1.0/15.0),rand5=None):
+def make_burst_waveforms(N_sig,amp=1,freq=100,dt=1.0/512,N=512,t_0=0.5,phi=2*(np.pi),tau=(1.0/30.0),rand5=None):
     # iterate over disired number of signals to generate
     data = []
     pars = []
@@ -178,7 +178,7 @@ def signal_pe_model():
     The PE network that learns how to convert images into parameters
     """
     model = Sequential()
-    act = 'tanh'
+    act = 'relu'
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
@@ -548,9 +548,9 @@ def main():
         L = []
         for count,pars in enumerate(xy): # used to be x
             template,_ = make_burst_waveforms(1,tau=pars[1],t_0=pars[0]) #.reshape(1,n_pix)
-	    L.append(-0.5*np.sum(((noise_signal-template)/n_sig)**2))
+	    L.append(-0.5*np.sum(((np.transpose(noise_signal)-template)/n_sig)**2))
         L = np.array(L).reshape(pe_grain,pe_grain).transpose()
-        L = np.exp(L-np.max(L))
+        L = np.exp(L-np.max(L)) 
         plot_pe_samples(None,signal_pars[0],L,'%s/pe_truelike.png' % out_path,x,y)
         print('Completed true grid PE')
 
