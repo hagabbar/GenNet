@@ -30,11 +30,11 @@ from scipy.stats import uniform
 
 # define some global params
 mnist_sig = False	# use the mnist dataset in tensorflow?
-Ngauss_sig = 1000	# Number of GW signals to use (<=0 means don't use)
+Ngauss_sig = 8000	# Number of GW signals to use (<=0 means don't use)
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 512	        # the rescaled image size (n_pix x n_pix)
-n_sig = 0.25           # the noise standard deviation (if None then use noise images)
-batch_size = 128	# the batch size (twice this when testing discriminator)
+n_sig = 0.25            # the noise standard deviation (if None then use noise images)
+batch_size = 64	        # the batch size (twice this when testing discriminator)
 max_iter = 10*1000 	# the maximum number of steps or epochs
 pe_iter = 1*1000        # the maximum number of steps or epochs for pe network 
 cadence = 10		# the cadence of output images
@@ -120,38 +120,42 @@ def generator_model():
     The generator that should train itself to generate noise free signals
     """
     model = Sequential()
-    act = 'tanh'
+    act = 'linear'
     momentum = 0.8
 
+    
     # the first dense layer converts the input (100 random numbers) into
     # 1024 numbers and outputs with a tanh activation
-    model.add(Dense(1024, input_shape=(100,)))
-    #model.add(BatchNormalization(momentum=momentum))
-    model.add(Activation(act))
+    #model.add(Dense(1024, input_shape=(100,)))
+    #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
    
     #model.add(Dense(512))
     #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
 
     # the second dense layer expands this up to 32768 and again uses a
     # tanh activation function
-    model.add(Dense(128 * 1 * int(n_pix/2)))
+    model.add(Dense(128 * 1 * int(n_pix/4), input_shape=(100,)))
     model.add(Activation(act))
+    model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
-    #model.add(LeakyReLU(alpha=0.2))
 
     # then we reshape into a cube, upsample by a factor of 2 in each of
     # 2 dimensions and apply a 2D convolution with filter size 5x5
     # and 64 neurons and again the activation is tanh 
-    model.add(Reshape((int(n_pix/2), 128)))
+    model.add(Reshape((int(n_pix/4), 128)))
     model.add(UpSampling1D(size=2))
     model.add(Conv1D(64, 5, padding='same'))
-    #model.add(BatchNormalization(momentum=momentum))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.5))
+
+    model.add(UpSampling1D(size=2))
 
     # if we have a 64x64 pixel dataset then we upsample once more 
     #if n_pix==64:
@@ -160,6 +164,22 @@ def generator_model():
     # the output shape should be n_colors x n_pix x n_pix
     model.add(Conv1D(n_colors, 5, padding='same'))
     model.add(Activation('tanh')) # this should be tanh
+    
+
+    """
+    # dense layer only network
+    model.add(Dense(256, input_shape=(100,)))
+    model.add(LeakyReLU(alpha=0.2))
+    model.add(BatchNormalization(momentum=0.8))
+    model.add(Dense(512))
+    model.add(LeakyReLU(alpha=0.2))
+    model.add(BatchNormalization(momentum=0.8))
+    model.add(Dense(1024))
+    model.add(LeakyReLU(alpha=0.2))
+    model.add(BatchNormalization(momentum=0.8))
+    model.add(Dense(np.prod(n_pix), activation='tanh'))
+    model.add(Reshape((n_pix,1)))
+    """
 
     return model
 
@@ -210,36 +230,53 @@ def signal_discriminator_model():
     The discriminator that should train itself to recognise generated signals
     from real signals
     """
-    act='tanh'
+    act='linear'
     momentum=0.8
 
     model = Sequential()
 
+    
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
-    model.add(Conv1D(64, 5, input_shape=(n_pix,1), padding='same'))
+    model.add(Conv1D(64, 5, input_shape=(n_pix,1), strides=2, padding='same'))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
-    model.add(MaxPooling1D(pool_size=2))
+    model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
+    model.add(Dropout(0.3))
+    #model.add(MaxPooling1D(pool_size=2))
 
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv1D(128, 5))
+    model.add(Conv1D(128, 5, strides=2))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
-    model.add(MaxPooling1D(pool_size=2))
+    model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
+    model.add(Dropout(0.3))
+    # model.add(MaxPooling1D(pool_size=2))
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
-    model.add(Dense(1024))
-    model.add(Activation(act))
+    #model.add(Dense(1024))
+    #model.add(BatchNormalization(momentum=momentum))
+    #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
 
     # the final dense layer has a sigmoid activation and a single output
     model.add(Dense(1))
     model.add(Activation('sigmoid'))
     
+
+    """
+    # dense layer only network
+    model.add(Flatten(input_shape=(n_pix,1)))
+    model.add(Dense(512))
+    model.add(LeakyReLU(alpha=0.2))
+    model.add(Dense(256))
+    model.add(LeakyReLU(alpha=0.2))
+    model.add(Dense(1, activation='sigmoid'))    
+    """
+
     return model
 
 def generator_after_subtracting_noise(generator, data_subtraction):
@@ -486,18 +523,18 @@ def main():
     # We use a mean squared error here since we want it to find 
     # the situation where the residuals have the known mean=0, std=n_sig properties
     data_subtraction_on_generator = generator_after_subtracting_noise(generator, data_subtraction)
-    data_subtraction_on_generator.compile(loss='mean_squared_error', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
+    data_subtraction_on_generator.compile(loss='mean_squared_error', optimizer=Adam(lr=5e-4, beta_1=0.5), metrics=['accuracy'])
 
     # setup generator training when we pass the output to the signal discriminator
     signal_discriminator_on_generator = generator_containing_signal_discriminator(generator, signal_discriminator)
     set_trainable(signal_discriminator, False)	# set the discriminator as not trainable for this step
-    signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
+    signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=5e-4, beta_1=0.5), metrics=['accuracy'])
 
     # setup trainin on signal discriminator model
     # This uses a binary cross entropy loss since we are just 
     # discriminating between real and fake signals
     set_trainable(signal_discriminator, True)	# set it back to being trainable
-    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
+    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=5e-4, beta_1=0.5), metrics=['accuracy'])
 
     if do_pe:
         signal_pe.compile(loss='mean_squared_error', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
@@ -678,6 +715,7 @@ def main():
 
             # save waveforms plot
             plt.savefig('%s/waveform_results%05d.png' % (out_path,i), dpi=500)
+            #plt.savefig('%s/most_recent_waveform.png' % out_path, dpi=500)
             plt.close()
 
             """
