@@ -136,9 +136,13 @@ def generator_model():
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
 
+    model.add(Dense(256, input_shape=(100,)))
+    model.add(Activation(act))
+    model.add(LeakyReLU(alpha=0.2))
+
     # the second dense layer expands this up to 32768 and again uses a
     # tanh activation function
-    model.add(Dense(128 * 1 * int(n_pix/4), input_shape=(100,)))
+    model.add(Dense(128 * 1 * int(n_pix/4)))
     model.add(Activation(act))
     model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
@@ -254,6 +258,14 @@ def signal_discriminator_model():
     #model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(0.3))
     # model.add(MaxPooling1D(pool_size=2))
+
+    model.add(Conv1D(256, 5, strides=2))
+    model.add(Activation(act))
+    model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
+    model.add(Dropout(0.3))
+    # model.add(MaxPooling1D(pool_size=2))
+
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
@@ -523,18 +535,18 @@ def main():
     # We use a mean squared error here since we want it to find 
     # the situation where the residuals have the known mean=0, std=n_sig properties
     data_subtraction_on_generator = generator_after_subtracting_noise(generator, data_subtraction)
-    data_subtraction_on_generator.compile(loss='mean_squared_error', optimizer=Adam(lr=5e-4, beta_1=0.5), metrics=['accuracy'])
+    data_subtraction_on_generator.compile(loss='mean_squared_error', optimizer=Adam(lr=1e-4, beta_1=0.5), metrics=['accuracy'])
 
     # setup generator training when we pass the output to the signal discriminator
     signal_discriminator_on_generator = generator_containing_signal_discriminator(generator, signal_discriminator)
     set_trainable(signal_discriminator, False)	# set the discriminator as not trainable for this step
-    signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=5e-4, beta_1=0.5), metrics=['accuracy'])
+    signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-4, beta_1=0.5), metrics=['accuracy'])
 
     # setup trainin on signal discriminator model
     # This uses a binary cross entropy loss since we are just 
     # discriminating between real and fake signals
     set_trainable(signal_discriminator, True)	# set it back to being trainable
-    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=5e-4, beta_1=0.5), metrics=['accuracy'])
+    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-4, beta_1=0.5), metrics=['accuracy'])
 
     if do_pe:
         signal_pe.compile(loss='mean_squared_error', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
