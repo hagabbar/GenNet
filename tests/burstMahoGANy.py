@@ -128,15 +128,15 @@ def generator_model():
     The generator that should train itself to generate noise free signals
     """
     model = Sequential()
-    act = 'tanh'
+    act = 'linear'
     momentum = 0.9
     drate = 0.3
 
     
     # the first dense layer converts the input (100 random numbers) into
     # 1024 numbers and outputs with a tanh activation
-    model.add(Dense(1024, input_shape=(100,)))
-    model.add(Activation(act))
+    #model.add(Dense(128, input_shape=(100,)))
+    #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.3))
@@ -154,9 +154,9 @@ def generator_model():
 
     # the second dense layer expands this up to 32768 and again uses a
     # tanh activation function
-    model.add(Dense(128 * 1 * int(n_pix/2)))
+    model.add(Dense(128 * 1 * int(n_pix/2), input_shape=(100,)))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
 
     # then we reshape into a cube, upsample by a factor of 2 in each of
@@ -164,17 +164,18 @@ def generator_model():
     # and 64 neurons and again the activation is tanh 
     model.add(Reshape((int(n_pix/2), 128)))
     model.add(UpSampling1D(size=2))
-    model.add(Conv1D(64, 5, padding='same'))
+    model.add(Conv1D(64, 5, strides=2, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.5))
 
-    #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(128, 5, padding='same'))
+    model.add(UpSampling1D(size=2))
+    model.add(Conv1D(128, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
+    model.add(LeakyReLU(alpha=0.2))
 
     # if we have a 64x64 pixel dataset then we upsample once more 
     #if n_pix==64:
@@ -264,8 +265,8 @@ def signal_pe_model():
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
-    model.add(Dense(1024))
-    model.add(Activation(act))
+    #model.add(Dense(1024))
+    #model.add(Activation(act))
 
     # the final dense layer has a linear activation and 2 outputs
     # we are currently testing with only 2 outputs - can be generalised
