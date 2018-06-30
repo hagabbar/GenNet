@@ -1,6 +1,6 @@
 from keras.models import Sequential
 from keras.layers import Dense
-from keras.layers import Reshape, Dropout
+from keras.layers import Reshape, Dropout, GaussianDropout
 from keras.layers.core import Activation
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling2D, UpSampling1D, Conv2DTranspose
@@ -30,13 +30,13 @@ from scipy.stats import uniform
 
 # define some global params
 mnist_sig = False	# use the mnist dataset in tensorflow?
-Ngauss_sig = 10000	# Number of GW signals to use (<=0 means don't use)
+Ngauss_sig = 50000	        # Number of GW signals to use (<=0 means don't use)
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 512	        # the rescaled image size (n_pix x n_pix)
 n_sig = 0.25            # the noise standard deviation (if None then use noise images)
-batch_size = 32	        # the batch size (twice this when testing discriminator)
-max_iter = 25*1000 	# the maximum number of steps or epochs
-pe_iter = 2*1000        # the maximum number of steps or epochs for pe network 
+batch_size = 64	        # the batch size (twice this when testing discriminator)
+max_iter = 50*1000 	# the maximum number of steps or epochs
+pe_iter = 1*1000        # the maximum number of steps or epochs for pe network 
 cadence = 100		# the cadence of output images
 save_models = False	# save the generator and discriminator models
 do_pe = True		# perform parameter estimation? 
@@ -72,7 +72,7 @@ def chisquare_Loss(yTrue,yPred):
     #return K.sqrt(K.sum(K.square(yPred - yTrue), axis=-1))
     return K.sum( K.square(K.log(yTrue) - K.log(yPred)/n_sig ), axis=-1)
 
-def make_burst_waveforms(N_sig,amp=1,freq=100,dt=1.0/512,N=512,t_0=0.5,phi=2*(np.pi),tau=(1.0/30.0),rand5=None):
+def make_burst_waveforms(N_sig,amp=1,freq=100,dt=1.0/512,N=512,t_0=0.5,phi=2*(np.pi),tau=(1.0/25.0),rand5=None):
     # iterate over disired number of signals to generate
     data = []
     pars = []
@@ -154,28 +154,40 @@ def generator_model():
 
     # the second dense layer expands this up to 32768 and again uses a
     # tanh activation function
-    model.add(Dense(128 * 1 * int(n_pix/2), input_shape=(100,)))
+    model.add(Dense(16 * 1 * int(n_pix/2), input_shape=(100,)))
     model.add(Activation(act))
-    model.add(LeakyReLU(alpha=0.2))
+    #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
 
     # then we reshape into a cube, upsample by a factor of 2 in each of
     # 2 dimensions and apply a 2D convolution with filter size 5x5
     # and 64 neurons and again the activation is tanh 
-    model.add(Reshape((int(n_pix/2), 128)))
+    model.add(Reshape((int(n_pix/2), 16)))
     model.add(UpSampling1D(size=2))
-    model.add(Conv1D(64, 5, strides=2, padding='same'))
+    model.add(Conv1D(64, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
-    model.add(LeakyReLU(alpha=0.2))
+    #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(0.5))
+    model.add(GaussianDropout(drate))
 
-    model.add(UpSampling1D(size=2))
-    model.add(Conv1D(128, 5, strides=1, padding='same'))
+    #model.add(UpSampling1D(size=2))
+    model.add(Conv1D(64, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
-    model.add(LeakyReLU(alpha=0.2))
+    #model.add(LeakyReLU(alpha=0.2))
+
+    #model.add(UpSampling1D(size=2))
+    model.add(Conv1D(256, 5, strides=1, padding='same'))
+    #model.add(MaxPooling1D(pool_size=2))
+    model.add(Activation(act))
+    #model.add(LeakyReLU(alpha=0.2))
+
+    #model.add(UpSampling1D(size=2))
+    model.add(Conv1D(512, 5, strides=1, padding='same'))
+    #model.add(MaxPooling1D(pool_size=2))
+    model.add(Activation(act))
+    #model.add(LeakyReLU(alpha=0.2))
 
     # if we have a 64x64 pixel dataset then we upsample once more 
     #if n_pix==64:
@@ -265,8 +277,8 @@ def signal_pe_model():
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
-    #model.add(Dense(1024))
-    #model.add(Activation(act))
+    model.add(Dense(1024))
+    model.add(Activation(act))
 
     # the final dense layer has a linear activation and 2 outputs
     # we are currently testing with only 2 outputs - can be generalised
@@ -476,7 +488,7 @@ def plot_pe_accuracy(true_pars,est_pars,outfile):
     plt.savefig(outfile)
     plt.close('all')
 
-def plot_pe_samples(pe_samples,truth,like,outfile,x,y):
+def plot_pe_samples(pe_samples,truth,like,outfile,x,y,pe_std=None):
     """
     Makes scatter plot of samples estimated from PE model
     """
@@ -495,8 +507,13 @@ def plot_pe_samples(pe_samples,truth,like,outfile,x,y):
     if pe_samples is not None:
         ax1.plot(pe_samples[:,0],pe_samples[:,1],'.r',markersize=0.8)
     
-    ax1.plot([truth[0],truth[0]],[np.min(y),np.max(y)],'-k')
-    ax1.plot([np.min(x),np.max(x)],[truth[1],truth[1]],'-k')
+    # plot pe_std error bars
+    if pe_std:
+        ax1.plot([truth[0]-pe_std[0],truth[0]+pe_std[0]],[truth[1],truth[1]], '-c')
+        ax1.plot([truth[0], truth[0]],[truth[1]-pe_std[1],truth[1]+pe_std[1]], '-c')
+
+    ax1.plot([truth[0],truth[0]],[np.min(y),np.max(y)],'-k', alpha=0.5)
+    ax1.plot([np.min(x),np.max(x)],[truth[1],truth[1]],'-k', alpha=0.5)
     ax1.set_xlabel(r'Parameter 1')
     ax1.set_ylabel(r'Parameter 2')
     #ax1.set_xlim([np.min(all_pars[:,0]),np.max(all_pars[:,0])])
@@ -737,15 +754,17 @@ def main():
 
                 # plot pe accuracy
 		plot_pe_accuracy(signal_train_pars,pe_samples,'%s/pe_accuracy%05d.png' % (out_path,i))
-            
+
 	        # compute RMS difference
                 rms = [np.mean((signal_train_pars[:,k]-pe_samples[:,k])**2) for k in np.arange(2)]
 
                 pe_mesg = "%d: [PE loss: %f, acc: %f, RMS: %f,%f]" % (i, pe_loss[0], pe_loss[1], rms[0], rms[1])
                 print(pe_mesg)
 
-            
- 
+        
+        # compute mean difference on pe estimates    
+        pe_std = [np.mean(np.abs(signal_train_pars[:,0]-pe_samples[:,0])),np.mean(np.abs(signal_train_pars[:,1]-pe_samples[:,1]))] 
+
         print('Completed CNN PE')
 
     ################################################
@@ -864,7 +883,7 @@ def main():
         	noise = np.random.uniform(size=[1000, 100], low=-1.0, high=1.0)
         	more_generated_images = generator.predict(noise)
                 pe_samples = signal_pe.predict(more_generated_images)
-                plot_pe_samples(pe_samples,signal_pars[0],L,'%s/pe_samples%05d.png' % (out_path,i), x, y)
+                plot_pe_samples(pe_samples,signal_pars[0],L,'%s/pe_samples%05d.png' % (out_path,i), x, y, pe_std)
             
 
 	    # save trained models
