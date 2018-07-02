@@ -1,6 +1,6 @@
 from keras.models import Sequential
 from keras.layers import Dense
-from keras.layers import Reshape, Dropout, GaussianDropout
+from keras.layers import Reshape, AlphaDropout, Dropout, GaussianDropout, GaussianNoise
 from keras.layers.core import Activation
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling2D, UpSampling1D, Conv2DTranspose
@@ -45,6 +45,7 @@ pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 25           # number of samples to view when plotting
 chi_loss = False         # set whether or not to use custom loss function
+lr = 2e-4               # learning rate for all networks
 
 # catch input errors
 if mnist_sig==True and n_colors != 1:
@@ -128,7 +129,7 @@ def generator_model():
     The generator that should train itself to generate noise free signals
     """
     model = Sequential()
-    act = 'linear'
+    act = 'relu'
     momentum = 0.9
     drate = 0.3
 
@@ -154,15 +155,16 @@ def generator_model():
 
     # the second dense layer expands this up to 32768 and again uses a
     # tanh activation function
-    model.add(Dense(16 * 1 * int(n_pix/2), input_shape=(100,)))
+    model.add(Dense(256 * 1 * int(n_pix/2), input_shape=(100,)))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
+    #model.add(GaussianDropout(drate))
 
     # then we reshape into a cube, upsample by a factor of 2 in each of
     # 2 dimensions and apply a 2D convolution with filter size 5x5
     # and 64 neurons and again the activation is tanh 
-    model.add(Reshape((int(n_pix/2), 16)))
+    model.add(Reshape((int(n_pix/2), 256)))
     model.add(UpSampling1D(size=2))
     model.add(Conv1D(64, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
@@ -176,18 +178,21 @@ def generator_model():
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
+    model.add(GaussianDropout(drate))
 
     #model.add(UpSampling1D(size=2))
     model.add(Conv1D(256, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
+    model.add(GaussianDropout(drate))
 
     #model.add(UpSampling1D(size=2))
     model.add(Conv1D(512, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
+    model.add(GaussianDropout(drate))
 
     # if we have a 64x64 pixel dataset then we upsample once more 
     #if n_pix==64:
@@ -646,26 +651,26 @@ def main():
     # the situation where the residuals have the known mean=0, std=n_sig properties
     if not chi_loss:
         data_subtraction_on_generator = generator_after_subtracting_noise(generator, data_subtraction)
-        data_subtraction_on_generator.compile(loss='mean_squared_error', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
+        data_subtraction_on_generator.compile(loss='mean_squared_error', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
 
     # setup generator training when we pass the output to the signal discriminator
     signal_discriminator_on_generator = generator_containing_signal_discriminator(generator, signal_discriminator)
     set_trainable(signal_discriminator, False)	# set the discriminator as not trainable for this step
     if not chi_loss:
-        signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
+        signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
     elif chi_loss:
-        signal_discriminator_on_generator.compile(loss=chisquare_Loss, optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
+        signal_discriminator_on_generator.compile(loss=chisquare_Loss, optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
 
     # setup trainin on signal discriminator model
     # This uses a binary cross entropy loss since we are just 
     # discriminating between real and fake signals
     set_trainable(signal_discriminator, True)	# set it back to being trainable
-    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
+    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
     #elif chi_loss:
     #    signal_discriminator.compile(loss=chisquare_Loss, optimizer=Adam(lr=9e-5, beta_1=0.5), metrics=['accuracy'])
 
     if do_pe:
-        signal_pe.compile(loss='mean_squared_error', optimizer=Adam(lr=2e-4, beta_1=0.5), metrics=['accuracy'])
+        signal_pe.compile(loss='mean_squared_error', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
 
     # print the model summaries
     print(generator.summary())
