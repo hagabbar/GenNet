@@ -60,12 +60,12 @@ def parser():
     parser = argparse.ArgumentParser(prog='data_prep.py',description='generates GW data for application of deep learning networks.')
 
     # arguments for reading in a data file
-    parser.add_argument('-N', '--Nsamp', type=int, default=5000, help='the number of samples')
+    parser.add_argument('-N', '--Nsamp', type=int, default=8000, help='the number of samples')
     parser.add_argument('-Nn', '--Nnoise', type=int, default=0, help='the number of noise realisations per signal, if 0 then signal only')
-    parser.add_argument('-Nb', '--Nblock', type=int, default=5000, help='the number of training samples per output file')
+    parser.add_argument('-Nb', '--Nblock', type=int, default=8000, help='the number of training samples per output file')
     parser.add_argument('-f', '--fsample', type=int, default=512, help='the sampling frequency (Hz)')
     parser.add_argument('-T', '--Tobs', type=int, default=1, help='the observation duration (sec)')
-    parser.add_argument('-s', '--snr', type=float, default=10, help='the signal integrated SNR')   
+    parser.add_argument('-s', '--snr', type=float, default=15, help='the signal integrated SNR')   
     parser.add_argument('-I', '--detectors', type=str, nargs='+',default=['H1'], help='the detectors to use')   
     parser.add_argument('-b', '--basename', type=str,default='templates/', help='output file path and basename')
     parser.add_argument('-m', '--mdist', type=str, default='astro', help='mass distribution for training (astro,gh,metric)')
@@ -187,7 +187,7 @@ def whiten_data(data,duration,sample_rate,psd,flag='td'):
     else:
         return xf
 
-def gen_masses(m_min=5.0,M_max=100.0,mdist='astro'):
+def gen_masses(m_min=15.0,M_max=75.0,mdist='astro'):
     """
     function returns a pair of masses drawn from the appropriate distribution
     """
@@ -469,7 +469,7 @@ def sim_data(fs,T_obs,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro',beta
 	    if verb: print '{}: completed {}/{} signal samples'.format(time.asctime(),cnt-npclass,int(size/2))        
 	else:
             # just generate noise free signal
-	    ts.append(np.array([whiten_data(t,T_obs,fs,psd.data.data) for t,psd in zip(ts_new,psds)]).reshape(ndet,-1))
+	    ts.append(np.array([whiten_data(t,T_obs,fs,psd.data.data)[int(fs/2):-int(fs/2)] for t,psd in zip(ts_new,psds)]).reshape(ndet,-1))
 	    par.append(par_new)
 	    yval.append(1)
             cnt += 1

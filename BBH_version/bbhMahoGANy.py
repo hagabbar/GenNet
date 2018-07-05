@@ -32,7 +32,7 @@ from gwpy.table import EventTable
 
 # define some global params
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
-n_pix = 1024	        # the rescaled image size (n_pix x n_pix)
+n_pix = 512	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0            # the noise standard deviation (if None then use noise images)
 batch_size = 32	        # the batch size (twice this when testing discriminator)
 max_iter = 50*1000 	# the maximum number of steps or epochs
@@ -523,7 +523,7 @@ def main():
     # combine signal and noise - this is the measured data i.e., h(t)
     noise_signal = np.transpose(signal_image + noise_image)
 
-    plt.plot(signal_image)
+    plt.plot(signal_image[0])
     plt.plot(noise_signal, alpha=0.5)
     plt.savefig('%s/input_waveform.png' % out_path)
     plt.close()
@@ -728,7 +728,7 @@ def main():
             # plot original waveform
             f, (ax1, ax3, ax4) = plt.subplots(3, 1, sharey=True)
             ax = signal_image
-            ax1.plot(ax, color='cyan', alpha=0.5, linewidth=0.5)
+            ax1.plot(ax[0], color='cyan', alpha=0.5, linewidth=0.5)
             ax1.plot(noise_signal, color='green', alpha=0.35, linewidth=0.5)
             ax1.set_title('signal + (sig+noise)')
 
@@ -740,7 +740,7 @@ def main():
             gen_sig = np.reshape(generated_images[:N_VIEWED], (generated_images[:N_VIEWED].shape[0],generated_images[:N_VIEWED].shape[1]))
 
             # plot generated signals - first image is the noise-free true signal
-            ax3.plot(signal_image, color='cyan', linewidth=0.5)
+            ax3.plot(signal_image[0], color='cyan', linewidth=0.5)
             ax3.plot(np.transpose(gen_sig), color='blue', alpha=0.15, linewidth=0.5)
             ax3.plot(noise_signal, color='green', alpha=0.25, linewidth=0.5)
             ax3.set_title('gen + sig + (sig+noise)')
