@@ -33,6 +33,8 @@ from scipy.stats import norm
 
 from sys import exit
 
+safe = 2    # define the safe multiplication scale for the desired time length
+
 def gen_psd(fs, T_obs, op='AdvDesign', det='H1'):
     """
     generates noise for a variety of different detectors
@@ -73,7 +75,7 @@ def chris_whiten_data(data,duration,sample_rate,psd,flag='td'):
 
     if flag=='td':
         # FT the input timeseries - window first
-        win = tukey(duration*sample_rate,alpha=1.0/8.0)
+        win = tukey((duration)*int(sample_rate),alpha=1.0/8.0)
         xf = np.fft.rfft(win*data)
     else:
         xf = data
@@ -87,12 +89,17 @@ def chris_whiten_data(data,duration,sample_rate,psd,flag='td'):
     # Detrend the data: no DC component.
     xf[0] = 0.0
 
-    if flag=='td':
+    x = np.fft.irfft(xf)
+    win = tukey(duration*sample_rate,alpha=1.0/8.0)
+    x *= win
+    return x
+
+    #if flag=='td':
         # Return to time domain.
-        x = np.fft.irfft(xf)
-        return x
-    else:
-        return xf
+    #    x = np.fft.irfft(xf)
+    #    return x
+    #else
+    #    return xf
 
 def get_fmin(M,eta,dt):
     """
@@ -128,7 +135,7 @@ def make_waveforms(template,dt,dist,fs,approximant,N,ndet,dets,psds,T_obs,f_low=
     N = T_obs * fs      # the total number of time samples
     dt = 1 / fs             # the sampling time (sec)
     approximant = lalsimulation.IMRPhenomD
-    f_high = fs/2.0
+    f_high = fs/2.0          #/2.0 why was f_high divided by 2?????
     df = 1.0/T_obs
     f_low = df*int(get_fmin(mc,eta,1.0)/df)
     f_ref = f_low    
@@ -164,12 +171,66 @@ def make_waveforms(template,dt,dist,fs,approximant,N,ndet,dets,psds,T_obs,f_low=
 
     hp = hp.data.data
     hc = hc.data.data
+
+    # compute reference idx
+    ref_idx = np.argmax(hp**2 + hc**2)
+
+    # get peak time varrying range
+    # pick new random max amplitude sample location - within beta fractions
+    # and slide waveform to that location
+    beta=[0.75,0.95]
+    low_idx,high_idx = convert_beta(beta,fs,T_obs)
+    if low_idx==high_idx:
+        idx = low_idx
+    else:
+        idx = int(np.random.randint(low_idx,high_idx,1)[0])
+
+    j = 0
+    hp_temp = hp[int(ref_idx-idx):]
+    hc_temp = hc[int(ref_idx-idx):]
+    #if len(ht_temp)<N:
+    #    hp[j,:len(ht_temp)] = hp_temp
+    #    hc[j,:len(ht_temp)] = hc_temp
+    #else:
+    #    hp[j,:] = hp_temp[:N]
+    #    hc[j,:] = hc_temp[:N]
+
     for psd in psds:
-        hp_1_wht = chris_whiten_data(hp, T_obs, fs, psd.data.data, flag='fd')
-        hc_1_wht = chris_whiten_data(hc, T_obs, fs, psd.data.data, flag='fd')
+        hp_1_wht = chris_whiten_data(hp_temp, T_obs, fs, psd.data.data, flag='fd')
+        hc_1_wht = chris_whiten_data(hc_temp, T_obs, fs, psd.data.data, flag='fd')
 
 
     return hp_1_wht,hc_1_wht,get_fmin(mc,eta,1)
+
+def tukey(M,alpha=0.5):
+    """
+    Tukey window code copied from scipy
+    """
+    n = np.arange(0, M)
+    width = int(np.floor(alpha*(M-1)/2.0))
+    n1 = n[0:width+1]
+    n2 = n[width+1:M-width-1]
+    n3 = n[M-width-1:]
+
+    w1 = 0.5 * (1 + np.cos(np.pi * (-1 + 2.0*n1/alpha/(M-1))))
+    w2 = np.ones(n2.shape)
+    w3 = 0.5 * (1 + np.cos(np.pi * (-2.0/alpha + 1 + 2.0*n3/alpha/(M-1))))
+    w = np.concatenate((w1, w2, w3))
+
+    return np.array(w[:M])
+
+def convert_beta(beta,fs,T_obs):
+    """
+    Converts beta values (fractions defining a desired period of time in
+    central output window) into indices for the full safe time window
+    """
+    # pick new random max amplitude sample location - within beta fractions
+    # and slide waveform to that location
+    newbeta = np.array([(beta[0] + 0.5*safe - 0.5),(beta[1] + 0.5*safe - 0.5)])/safe
+    low_idx = int(T_obs*fs*newbeta[0])
+    high_idx = int(T_obs*fs*newbeta[1])
+
+    return low_idx,high_idx
 
 def main():
     Tobs = 1       # observation time window
@@ -177,14 +238,16 @@ def main():
     ndet = 1       # number of detectors
     N = Tobs * fs  # the total number of time samples
     n = N // 2 + 1 # the number of frequency bins    
-    f_low = 18     # the lower frequency cutoff
+    f_low = 20.0     # the lower frequency cutoff
     dt = 1 / fs    # the sampling time (sec)
     dets = ['H1']
 
+    # get psds
     psds = [gen_psd(fs, Tobs, op='AdvDesign', det='H1')] #for d in args.detectors]
     wpsds = (2.0 / fs) * np.ones((ndet, n)) # define effective PSD for whited data
 
-    tmp_bank = 'data/f_low18-threePointFivePN-f_upper4096NonSpin.xml'
+    # get template bank parameters
+    tmp_bank = 'data/f_low20-threePointFivePN-f_upper2048NonSpin_15-50m1m2.xml'
     # load template bank
     # format=ligolw.sngl_inspiral
     tmp_bank = np.array(EventTable.read(tmp_bank,
@@ -209,6 +272,7 @@ def main():
             hp_bank.update({idx:hp_new})
             hc_bank.update({idx:hc_new})
             fmin_bank.update({idx:fmin_new})
+
 
     # dump contents of hp and hc banks to pickle file
     pickle_hp = open("%shp.pkl" % outdir,"wb")

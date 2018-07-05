@@ -27,44 +27,30 @@ from sys import exit
 import pandas as pd
 import pickle
 from scipy.stats import uniform
+from scipy.signal import resample
+from gwpy.table import EventTable
 
 # define some global params
-mnist_sig = False	# use the mnist dataset in tensorflow?
-Ngauss_sig = 50000	        # Number of GW signals to use (<=0 means don't use)
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
-n_pix = 512	        # the rescaled image size (n_pix x n_pix)
-n_sig = 0.25            # the noise standard deviation (if None then use noise images)
-batch_size = 64	        # the batch size (twice this when testing discriminator)
+n_pix = 1024	        # the rescaled image size (n_pix x n_pix)
+n_sig = 1.0            # the noise standard deviation (if None then use noise images)
+batch_size = 32	        # the batch size (twice this when testing discriminator)
 max_iter = 50*1000 	# the maximum number of steps or epochs
 pe_iter = 1*1000        # the maximum number of steps or epochs for pe network 
 cadence = 100		# the cadence of output images
 save_models = False	# save the generator and discriminator models
-do_pe = True		# perform parameter estimation? 
+do_pe = False		# perform parameter estimation? 
 pe_cadence = 100  	# the cadence of PE outputs
 pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 25           # number of samples to view when plotting
 chi_loss = False         # set whether or not to use custom loss function
-lr = 2e-4               # learning rate for all networks
-
-# catch input errors
-if mnist_sig==True and n_colors != 1:
-    print 'Sorry, the mnist data is greyscale only'
-    exit(0)
-if mnist_sig==True and Ngauss_sig>0:
-    print 'Sorry, can\'t use both mnist and gaussian signals'
-    exit(0)
-if Ngauss_sig>0 and n_colors==3:
-    print 'Sorry, can\'t use colour images with the gaussian signals'
-    exit(0)    
-if do_pe==True and Ngauss_sig<=0:
-    print 'Sorry, can only do parameter estimation if using a parameterised signal model'
-    exit(0)
+lr = 9e-5               # learning rate for all networks
 
 # the locations of signal files and output directory
-signal_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data.pkl'
-pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
-out_path = '/home/hunter.gabbard/public_html/Burst/mahoGANy/burst_results'
+#signal_path = '/home/hunter.gabbard/Burst/GenNet/BBH_version/data/GW150914_data.pkl'
+#pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
+out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/results'
 
 def chisquare_Loss(yTrue,yPred):
     #K.sum( K.square(K.log(data) - K.log(wvm)/n_sig ))
@@ -72,30 +58,6 @@ def chisquare_Loss(yTrue,yPred):
     #return K.sum( K.square(K.log(yTrue) - K.log(yPred)/n_sig ), axis=-1)
     #return K.sqrt(K.sum(K.square(yPred - yTrue), axis=-1))
     return K.sum( K.square(K.log(yTrue) - K.log(yPred)/n_sig ), axis=-1)
-
-def make_burst_waveforms(N_sig,amp=1,freq=100,dt=1.0/512,N=512,t_0=0.5,phi=2*(np.pi),tau=(1.0/25.0),rand5=None):
-    # iterate over disired number of signals to generate
-    data = []
-    pars = []
-
-    # fix all parameters except for t0 and freq
-    for i in range(N_sig):
-        if rand5==True:
-            # randomize t0 and freq
-            t_0 = random.uniform(0.25,0.75)
-            tau = random.uniform(1.0/60.0,1.0/15.0)
-            
-
-        # define time series
-        t = dt * np.arange(0,N,1)
-
-        # define h_t for sine-Gaussian waveform
-        h_t = amp * np.sin(2*np.pi*freq*(t-t_0)+phi) * np.exp(-(t-t_0)**2/(tau**2))
-
-        data.append(h_t)
-        pars.append([t_0,tau])
-    return np.array(data), np.array(pars)
-    #return np.array(data).reshape(N_sig,-1),np.array(pars).reshape(N_sig,-1)
 
 class MyLayer(Layer):
     """
@@ -167,32 +129,32 @@ def generator_model():
     model.add(Reshape((int(n_pix/2), 256)))
     model.add(UpSampling1D(size=2))
     model.add(Conv1D(64, 5, strides=1, padding='same'))
-    #model.add(MaxPooling1D(pool_size=2))
+    model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
-    model.add(GaussianDropout(drate))
+    #model.add(GaussianDropout(drate))
 
-    #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(64, 5, strides=1, padding='same'))
+    model.add(UpSampling1D(size=2))
+    model.add(Conv1D(128, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(GaussianDropout(drate))
+    #model.add(GaussianDropout(drate))
 
     #model.add(UpSampling1D(size=2))
     model.add(Conv1D(256, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(GaussianDropout(drate))
+    #model.add(GaussianDropout(drate))
 
     #model.add(UpSampling1D(size=2))
     model.add(Conv1D(512, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(GaussianDropout(drate))
+    #model.add(GaussianDropout(drate))
 
     # if we have a 64x64 pixel dataset then we upsample once more 
     #if n_pix==64:
@@ -200,54 +162,8 @@ def generator_model():
     # apply another 2D convolution with filter size 5x5 and a tanh activation
     # the output shape should be n_colors x n_pix x n_pix
     model.add(Conv1D(n_colors, 5, padding='same'))
-    model.add(Activation('tanh')) # this should be tanh
+    model.add(Activation('linear')) # this should be tanh
     
-
-    """
-    # dense layer only network
-    model.add(Dense(256, input_shape=(100,)))
-    model.add(LeakyReLU(alpha=0.2))
-    model.add(BatchNormalization(momentum=0.8))
-    model.add(Dense(512))
-    model.add(LeakyReLU(alpha=0.2))
-    model.add(BatchNormalization(momentum=0.8))
-    model.add(Dense(1024))
-    model.add(LeakyReLU(alpha=0.2))
-    model.add(BatchNormalization(momentum=0.8))
-    model.add(Dense(np.prod(n_pix), activation='tanh'))
-    model.add(Reshape((n_pix,1)))
-    """
-
-    """
-    # DCGAN
-    # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
-    # the activation is tanh and we apply a 2x2 max pooling
-    act = 'relu'
-    model.add(Dense(n_pix, input_shape=(100,)))
-    model.add(Reshape((1, int(n_pix), 1)))
-    model.add(Conv2DTranspose(512, (1,5), strides=(1,1), padding='same'))
-    model.add(Activation(act))
-    model.add(BatchNormalization(momentum=momentum))
-
-    model.add(Conv2DTranspose(256, (1,5), strides=(1,1), padding='same'))
-    model.add(Activation(act))
-    model.add(BatchNormalization(momentum=momentum))
-
-    model.add(Conv2DTranspose(128, (1,5), strides=(1,1), padding='same'))
-    model.add(Activation(act))
-    model.add(BatchNormalization(momentum=momentum))
-
-    model.add(Conv2DTranspose(64, (1,5), strides=(1,1), padding='same'))
-    model.add(Activation(act))
-    model.add(BatchNormalization(momentum=momentum))
-
-    # the final dense layer has a sigmoid activation and a single output
-    # the output shape should be n_colors x n_pix x n_pix
-    model.add(Conv2DTranspose(n_colors, 64, padding='same'))
-    model.add(Activation('tanh')) # this should be tanh
-    model.add(Reshape((n_pix,1)))
-    """
-
     return model
 
 def data_subtraction_model(noise_signal,npix):
@@ -299,7 +215,7 @@ def signal_discriminator_model():
     """
 
     
-    act='tanh'
+    act='linear'
     momentum=0.8
 
     model = Sequential()
@@ -309,7 +225,7 @@ def signal_discriminator_model():
     # the activation is tanh and we apply a 2x2 max pooling
     model.add(Conv1D(64, 5, input_shape=(n_pix,1), strides=1, padding='same'))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.3))
     model.add(MaxPooling1D(pool_size=2))
@@ -319,7 +235,7 @@ def signal_discriminator_model():
     # for input to the next dense layer
     model.add(Conv1D(128, 5, strides=1))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.3))
     model.add(MaxPooling1D(pool_size=2))
@@ -357,48 +273,6 @@ def signal_discriminator_model():
     model.add(Dense(1))
     model.add(Activation('sigmoid'))
     
-
-    """
-    # dense layer only network
-    model.add(Flatten(input_shape=(n_pix,1)))
-    model.add(Dense(512))
-    model.add(LeakyReLU(alpha=0.2))
-    model.add(Dense(256))
-    model.add(LeakyReLU(alpha=0.2))
-    model.add(Dense(1, activation='sigmoid'))    
-    """
-
-    """ 
-    # DCGAN
-    drate = 0.6
-    # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
-    # the activation is tanh and we apply a 2x2 max pooling
-    model.add(Conv1D(64, 5, input_shape=(n_pix,1), strides=1, padding='same'))
-    model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
-    #model.add(MaxPooling1D(pool_size=2))
-
-    #model.add(Conv1D(128, 5, strides=1, padding='same'))
-    #model.add(LeakyReLU(alpha=0.2))
-    #model.add(Dropout(drate))
-
-    #model.add(Conv1D(256, 5, strides=1, padding='same'))
-    #model.add(LeakyReLU(alpha=0.2))
-    #model.add(Dropout(drate))
-
-    #model.add(Conv1D(512, 5, strides=1, padding='same'))
-    #model.add(LeakyReLU(alpha=0.2))
-    #model.add(Dropout(drate))
-
-    model.add(Flatten())
-    #model.add(Dense(50))
-    #model.add(Activation('tanh'))
-
-    # the final dense layer has a sigmoid activation and a single output
-    model.add(Dense(1))
-    model.add(Activation('sigmoid'))
-    """
-
     return model
 
 def generator_after_subtracting_noise(generator, data_subtraction):
@@ -421,15 +295,6 @@ def generator_containing_signal_discriminator(generator, signal_discriminator):
     model.add(generator)		# the trainable parameters are in this model
     model.add(signal_discriminator)	# the discriminator has been set to not be trainable
     return model
-
-def renorm(image):
-    """
-    This function simply rescales an image between -1 and 1.
-    *IMPORTANT* This is for plotting purposes *ONLY*.
-    """
-    hspan = 0.5*(np.max(image)-np.min(image))
-    mean = 0.5*(np.max(image)+np.min(image))
-    return (image - mean)/hspan
 
 def plot_losses(losses,filename,logscale=False,legend=None):
     """
@@ -546,7 +411,7 @@ def set_trainable(model, trainable):
     for layer in model.layers:
         layer.trainable = trainable
 
-def load_data(data_path,pars_path,Ngauss_sig):
+def load_data(signal_path,pars_path,Ngauss_sig):
     """
     Truncates input GW waveform data file into a numpy array called data.
     """
@@ -566,6 +431,20 @@ def load_data(data_path,pars_path,Ngauss_sig):
     pars = pars[:Ngauss_sig]
 
     return data,pars
+
+def load_gw_event(path):
+    """
+    Truncates input GW waveform data file into a numpy array called data.
+    Will also resample data if desired.
+    """
+    print('Using data for: {0}'.format(path))
+
+    # load in time series dataset
+    with open(signal_path, 'rb') as rfp:
+        data = pickle.load(rfp)
+
+    return data
+
 def main():
 
     ################################################
@@ -575,11 +454,21 @@ def main():
 
     # setup output directory - make sure it exists
     os.system('mkdir -p %s' % out_path) 
-   
-    
-    # load signal training images and save examples
-    signal_train_images, signal_train_pars = make_burst_waveforms(Ngauss_sig,rand5=True)
-    #signal_train_images, signal_train_pars = load_data(signal_path,pars_path,Ngauss_sig)
+
+    template_dir = 'templates/'   
+
+    # load hplus and hcross pickle file
+    #pickle_hp = open("%shp.pkl" % template_dir,"rb")
+    #hp = pickle.load(pickle_hp)
+    #pickle_hc = open("%shc.pkl" % template_dir,"rb")
+    #hc = pickle.load(pickle_hc)
+    #pickle_fmin = open("%sfmin.pkl" % template_dir,"rb")
+    #fmin_bank = pickle.load(pickle_fmin)
+
+    pickle_ts = open("%s_ts_0.sav" % template_dir,"rb")
+    ts = pickle.load(pickle_ts)
+
+    signal_train_images = np.reshape(ts[0], (ts[0].shape[0],ts[0].shape[2]))
 
     """
     # not really sure what this is for???
@@ -601,8 +490,8 @@ def main():
 
     # randomly extract single image as the true signal
     # IMPORTANT - make sure to delete it from the training set
-    #i = np.random.randint(0,signal_train_images.shape[0],size=1)
-    #signal_image = signal_train_images[i,:]
+    i = np.random.randint(0,signal_train_images.shape[0],size=1)
+    signal_image = signal_train_images[i,:]
 
     #signal_fftd = np.fft.rfft(signal_image)[0]
     #plt.loglog(np.real(signal_fftd*np.conjugate(signal_fftd)))
@@ -611,18 +500,22 @@ def main():
 
     # choose fixed signal
     # pars will be default params in function
-    signal_image,signal_pars=make_burst_waveforms(1)
+    #input_image=load_gw_event(signal_path)
 
-    # plot input waveform to be pe'd
-    plt.plot(signal_image[0]) 
-    plt.savefig('%s/input_waveform.png' % out_path)
-    plt.close()
-    #signal_train_images = np.delete(signal_train_images,i,axis=0)
+    signal_train_images = np.delete(signal_train_images,i,axis=0)
     
     #if do_pe:
     #    signal_pars = signal_train_pars[i,:]
     #    print(signal_pars)
     #    signal_train_pars = np.delete(signal_train_pars,i,axis=0)    
+
+    # combine signal and noise - this is the measured data i.e., h(t)
+    #noise_signal = input_image[0][int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
+    #signal_image = input_image[1][int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
+
+    # resample GW150914
+    #noise_signal = resample(noise_signal,n_pix)
+    #signal_image = resample(signal_image,n_pix)
 
     # Generate single noise image
     noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[1]])
@@ -630,10 +523,10 @@ def main():
     # combine signal and noise - this is the measured data i.e., h(t)
     noise_signal = np.transpose(signal_image + noise_image)
 
-    # output combined true signal and noise image - normalise between -1,1 *ONLY* for plotting
-    #tmp = np.array([signal_image,noise_image,renorm(noise_signal)]).reshape(3,n_pix,n_pix,n_colors)
-    #true_out = combine_images(tmp,cols=2,rows=2,randomize=False)
-    #true_out.save('%s/input.png' % out_path)
+    plt.plot(signal_image)
+    plt.plot(noise_signal, alpha=0.5)
+    plt.savefig('%s/input_waveform.png' % out_path)
+    plt.close()
 
     ################################################
     # SETUP MODELS #################################
@@ -777,6 +670,15 @@ def main():
 
     losses = []		# initailise the losses for plotting 
     for i in range(max_iter):
+        #print(len(hp.keys()))
+        #for j in range(0,len(hp.keys())):
+        #    temp = hp[j]
+        #    plt.plot(temp, alpha=0.5)
+        #plt.savefig('%s/template.png' % out_path)
+        #plt.close()
+
+        #h_idx = random.sample(list(hp.keys()), batch_size)
+        #signal_batch_images = np.array([hp[k] for k in h_idx])
 
 	# get random batch from images, should be real signals
         signal_batch_images = np.array(random.sample(signal_train_images, batch_size))
@@ -826,7 +728,7 @@ def main():
             # plot original waveform
             f, (ax1, ax3, ax4) = plt.subplots(3, 1, sharey=True)
             ax = signal_image
-            ax1.plot(ax[0], color='cyan', alpha=0.5, linewidth=0.5)
+            ax1.plot(ax, color='cyan', alpha=0.5, linewidth=0.5)
             ax1.plot(noise_signal, color='green', alpha=0.35, linewidth=0.5)
             ax1.set_title('signal + (sig+noise)')
 
@@ -838,7 +740,7 @@ def main():
             gen_sig = np.reshape(generated_images[:N_VIEWED], (generated_images[:N_VIEWED].shape[0],generated_images[:N_VIEWED].shape[1]))
 
             # plot generated signals - first image is the noise-free true signal
-            ax3.plot(signal_image[0], color='cyan', linewidth=0.5)
+            ax3.plot(signal_image, color='cyan', linewidth=0.5)
             ax3.plot(np.transpose(gen_sig), color='blue', alpha=0.15, linewidth=0.5)
             ax3.plot(noise_signal, color='green', alpha=0.25, linewidth=0.5)
             ax3.set_title('gen + sig + (sig+noise)')
@@ -858,7 +760,6 @@ def main():
             plt.savefig('%s/waveform_results%05d.png' % (out_path,i), dpi=500)
             #plt.savefig('%s/most_recent_waveform.png' % out_path, dpi=500)
             plt.close()
-
             """
             # plot mean and standard-dev of generated images from last batch
             tmp = []
