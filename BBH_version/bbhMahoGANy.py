@@ -34,7 +34,7 @@ from gwpy.table import EventTable
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 512	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0            # the noise standard deviation (if None then use noise images)
-batch_size = 32	        # the batch size (twice this when testing discriminator)
+batch_size = 64	        # the batch size (twice this when testing discriminator)
 max_iter = 50*1000 	# the maximum number of steps or epochs
 pe_iter = 1*1000        # the maximum number of steps or epochs for pe network 
 cadence = 100		# the cadence of output images
@@ -45,12 +45,13 @@ pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 25           # number of samples to view when plotting
 chi_loss = False         # set whether or not to use custom loss function
-lr = 9e-5               # learning rate for all networks
+lr = 2e-4               # learning rate for all networks
+GW150914 = True         # run on GW150914
 
 # the locations of signal files and output directory
-#signal_path = '/home/hunter.gabbard/Burst/GenNet/BBH_version/data/GW150914_data.pkl'
+signal_path = '/home/hunter.gabbard/Burst/GenNet/BBH_version/data/GW150914_data.pkl'
 #pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
-out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/results'
+out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/GW150914'
 
 def chisquare_Loss(yTrue,yPred):
     #K.sum( K.square(K.log(data) - K.log(wvm)/n_sig ))
@@ -133,28 +134,28 @@ def generator_model():
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
-    #model.add(GaussianDropout(drate))
+    model.add(GaussianDropout(drate))
 
     model.add(UpSampling1D(size=2))
     model.add(Conv1D(128, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(GaussianDropout(drate))
+    model.add(GaussianDropout(drate))
 
     #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(256, 5, strides=1, padding='same'))
+    model.add(Conv1D(256, 5, strides=2, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(GaussianDropout(drate))
+    model.add(GaussianDropout(drate))
 
-    #model.add(UpSampling1D(size=2))
+    model.add(UpSampling1D(size=2))
     model.add(Conv1D(512, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(GaussianDropout(drate))
+    model.add(GaussianDropout(drate))
 
     # if we have a 64x64 pixel dataset then we upsample once more 
     #if n_pix==64:
@@ -215,7 +216,7 @@ def signal_discriminator_model():
     """
 
     
-    act='linear'
+    act='tanh'
     momentum=0.8
 
     model = Sequential()
@@ -225,7 +226,7 @@ def signal_discriminator_model():
     # the activation is tanh and we apply a 2x2 max pooling
     model.add(Conv1D(64, 5, input_shape=(n_pix,1), strides=1, padding='same'))
     model.add(Activation(act))
-    model.add(LeakyReLU(alpha=0.2))
+    #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.3))
     model.add(MaxPooling1D(pool_size=2))
@@ -235,7 +236,7 @@ def signal_discriminator_model():
     # for input to the next dense layer
     model.add(Conv1D(128, 5, strides=1))
     model.add(Activation(act))
-    model.add(LeakyReLU(alpha=0.2))
+    #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.3))
     model.add(MaxPooling1D(pool_size=2))
@@ -490,8 +491,10 @@ def main():
 
     # randomly extract single image as the true signal
     # IMPORTANT - make sure to delete it from the training set
-    i = np.random.randint(0,signal_train_images.shape[0],size=1)
-    signal_image = signal_train_images[i,:]
+    if not GW150914:
+        i = np.random.randint(0,signal_train_images.shape[0],size=1)
+        signal_image = signal_train_images[i,:]
+        signal_train_images = np.delete(signal_train_images,i,axis=0)
 
     #signal_fftd = np.fft.rfft(signal_image)[0]
     #plt.loglog(np.real(signal_fftd*np.conjugate(signal_fftd)))
@@ -500,30 +503,32 @@ def main():
 
     # choose fixed signal
     # pars will be default params in function
-    #input_image=load_gw_event(signal_path)
+    if GW150914:
+        input_image=load_gw_event(signal_path)
 
-    signal_train_images = np.delete(signal_train_images,i,axis=0)
-    
-    #if do_pe:
-    #    signal_pars = signal_train_pars[i,:]
-    #    print(signal_pars)
-    #    signal_train_pars = np.delete(signal_train_pars,i,axis=0)    
-
-    # combine signal and noise - this is the measured data i.e., h(t)
-    #noise_signal = input_image[0][int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
-    #signal_image = input_image[1][int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
-
-    # resample GW150914
-    #noise_signal = resample(noise_signal,n_pix)
-    #signal_image = resample(signal_image,n_pix)
-
-    # Generate single noise image
-    noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[1]])
+    if do_pe and not GW150914:
+        signal_pars = signal_train_pars[i,:]
+        print(signal_pars)
+        signal_train_pars = np.delete(signal_train_pars,i,axis=0)    
 
     # combine signal and noise - this is the measured data i.e., h(t)
-    noise_signal = np.transpose(signal_image + noise_image)
+    if GW150914:
+        noise_signal = input_image[0][int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
+        signal_image = input_image[1][int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
 
-    plt.plot(signal_image[0])
+        # resample GW150914
+        noise_signal = resample(noise_signal,n_pix)
+        signal_image = resample(signal_image,n_pix)
+
+    if not GW150914:
+        # Generate single noise image
+        noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[1]])
+
+        # combine signal and noise - this is the measured data i.e., h(t)
+        noise_signal = np.transpose(signal_image + noise_image)
+        signal_image = signal_image[0]
+
+    plt.plot(signal_image)
     plt.plot(noise_signal, alpha=0.5)
     plt.savefig('%s/input_waveform.png' % out_path)
     plt.close()
@@ -726,9 +731,9 @@ def main():
             #plt.close()
 	    
             # plot original waveform
-            f, (ax1, ax3, ax4) = plt.subplots(3, 1, sharey=True)
+            f, (ax1, ax2, ax3) = plt.subplots(3, 1, sharey=True)
             ax = signal_image
-            ax1.plot(ax[0], color='cyan', alpha=0.5, linewidth=0.5)
+            ax1.plot(ax, color='cyan', alpha=0.5, linewidth=0.5)
             ax1.plot(noise_signal, color='green', alpha=0.35, linewidth=0.5)
             ax1.set_title('signal + (sig+noise)')
 
@@ -739,20 +744,35 @@ def main():
             # plotable generated signals
             gen_sig = np.reshape(generated_images[:N_VIEWED], (generated_images[:N_VIEWED].shape[0],generated_images[:N_VIEWED].shape[1]))
 
+            # compute percentile curves
+            perc_90 = []
+            perc_75 = []
+            perc_25 = []
+            perc_5 = []
+            for n in range(gen_sig.shape[1]):
+                perc_90.append(np.percentile(gen_sig[:,n], 90))
+                perc_75.append(np.percentile(gen_sig[:,n], 75))
+                perc_25.append(np.percentile(gen_sig[:,n], 25))
+                perc_5.append(np.percentile(gen_sig[:,n], 5))
+
             # plot generated signals - first image is the noise-free true signal
-            ax3.plot(signal_image[0], color='cyan', linewidth=0.5)
-            ax3.plot(np.transpose(gen_sig), color='blue', alpha=0.15, linewidth=0.5)
-            ax3.plot(noise_signal, color='green', alpha=0.25, linewidth=0.5)
-            ax3.set_title('gen + sig + (sig+noise)')
+            ax2.plot(signal_image, color='cyan', linewidth=0.5)
+            #ax2.plot(np.transpose(gen_sig), color='blue', alpha=0.15, linewidth=0.5)
+            #ax2.plot(noise_signal, color='green', alpha=0.25, linewidth=0.5)
+            #ax2.plot(perc_90, color='#d5d8dc', linewidth=0.5, alpha=0.5)
+            #ax2.plot(perc_5, color='#d5d8dc', linewidth=0.5, alpha=0.5)
+            ax2.fill_between(np.linspace(0,len(perc_90),num=len(perc_90)), perc_90, perc_5, facecolor='#d5d8dc')
+            ax2.fill_between(np.linspace(0,len(perc_75),num=len(perc_75)), perc_75, perc_25, facecolor='#808b96')
+            ax2.set_title('gen + sig + (sig+noise)')
 	    #image = combine_images(generated_images,extra=signal_image.reshape(n_pix,n_pix,n_colors))
             #image.save('%s/gen_signal%05d.png' % (out_path,i))
 	    
 	    # plot residuals - generated images subtracted from the measured image
             # the first image is the true noise realisation
             residuals = np.transpose(np.transpose(noise_signal)-gen_sig)
-            ax4.plot((residuals), color='red', alpha=0.25, linewidth=0.5)
+            ax3.plot((residuals), color='red', alpha=0.25, linewidth=0.5)
             
-            ax4.set_title('Residuals')
+            ax3.set_title('Residuals')
             #image = combine_images(renorm(noise_signal-generated_images),extra=noise_image.reshape(n_pix,n_pix,n_colors)) 
             #image.save('%s/residual%05d.png' % (out_path,i))
 
