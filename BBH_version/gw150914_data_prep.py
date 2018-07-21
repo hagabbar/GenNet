@@ -17,9 +17,11 @@ from scipy.optimize import brentq
 from lal import MSUN_SI, C_SI, G_SI
 import os
 from sys import exit
+import scipy
 
 safe = 2    # define the safe multiplication scale for the desired time length
 verb = False
+gw_tmp = True
 
 class bbhparams:
     def __init__(self,mc,M,eta,m1,m2,ra,dec,iota,phi,psi,idx,fmin,snr,SNR):
@@ -60,12 +62,12 @@ def parser():
     parser = argparse.ArgumentParser(prog='data_prep.py',description='generates GW data for application of deep learning networks.')
 
     # arguments for reading in a data file
-    parser.add_argument('-N', '--Nsamp', type=int, default=10, help='the number of samples')
+    parser.add_argument('-N', '--Nsamp', type=int, default=8000, help='the number of samples')
     parser.add_argument('-Nn', '--Nnoise', type=int, default=0, help='the number of noise realisations per signal, if 0 then signal only')
-    parser.add_argument('-Nb', '--Nblock', type=int, default=10, help='the number of training samples per output file')
+    parser.add_argument('-Nb', '--Nblock', type=int, default=8000, help='the number of training samples per output file')
     parser.add_argument('-f', '--fsample', type=int, default=512, help='the sampling frequency (Hz)')
     parser.add_argument('-T', '--Tobs', type=int, default=1, help='the observation duration (sec)')
-    parser.add_argument('-s', '--snr', type=float, default=15, help='the signal integrated SNR')   
+    parser.add_argument('-s', '--snr', type=float, default=24, help='the signal integrated SNR')   
     parser.add_argument('-I', '--detectors', type=str, nargs='+',default=['H1'], help='the detectors to use')   
     parser.add_argument('-b', '--basename', type=str,default='templates/', help='output file path and basename')
     parser.add_argument('-m', '--mdist', type=str, default='astro', help='mass distribution for training (astro,gh,metric)')
@@ -256,7 +258,7 @@ def get_fmin(M,eta,dt):
 
     return fmin
 
-def gen_par(fs,T_obs,mdist='astro',beta=[0.75,0.95]):
+def gen_par(fs,T_obs,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
     """
     Generates a random set of parameters
     """
@@ -305,6 +307,18 @@ def gen_par(fs,T_obs,mdist='astro',beta=[0.75,0.95]):
     # store params
     par = bbhparams(mc,M,eta,m12[0],m12[1],ra,dec,np.cos(iota),phi,psi,idx,fmin,None,None)
 
+    """
+    Only if you want to gen template like gw150914. Will be first template in 
+    set.
+    """
+    if gw_tmp:
+        m1, m2 = 39.0, 30.9
+        eta = m1*m2/(m1+m2)**2
+        M = m1 + m2
+        mc = M*eta**(3.0/5.0)
+        fmin = get_fmin(M,eta,int(idx-sidx)/fs) 
+        par = bbhparams(mc,M,eta,m1,m2,ra,dec,np.cos(iota),phi,psi,idx,fmin,None,None)
+
     return par
 
 def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None):
@@ -317,7 +331,7 @@ def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None):
     amplitude_order = 0
     phase_order = 7
     approximant = lalsimulation.IMRPhenomD
-    dist = 1e6*lal.PC_SI  # put it as 1 MPc
+    dist = np.random.uniform(200e6,500e6)*lal.PC_SI  # put it as 1 MPc
 
     # make waveform
     # loop until we have a long enough waveform - slowly reduce flow as needed
@@ -352,13 +366,13 @@ def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None):
     win[int((N-tempwin.size)/2):int((N-tempwin.size)/2)+tempwin.size] = tempwin
 
     # loop over detectors
-    ndet = len(psds)
+    ndet = 1
     ts = np.zeros((ndet,N))
     hp = np.zeros((ndet,N))
     hc = np.zeros((ndet,N))
     intsnr = []
     j = 0
-    for det,psd in zip(dets,psds):
+    for det in dets:
 
     	# make signal - apply antenna and shifts
     	ht_shift, hp_shift, hc_shift = make_bbh(orig_hp,orig_hc,fs,par.ra,par.dec,par.psi,det)
@@ -384,7 +398,7 @@ def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None):
     	hc[j,:] *= win
 
         # compute SNR of pre-whitened data
-        intsnr.append(get_snr(ts[j,:],T_obs,fs,psd.data.data,par.fmin))
+        intsnr.append(get_snr(ts[j,:],T_obs,fs,psds,par.fmin))
 
     # normalise the waveform using either integrated or peak SNR
     intsnr = np.array(intsnr)
@@ -427,7 +441,7 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det):
 
     return new_ht, new_hp, new_hc    
 
-def sim_data(fs,T_obs,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro',beta=[0.75,0.95]):
+def sim_data(fs,T_obs,psds,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro',beta=[0.75,0.95]):
     """
     Simulates all of the test, validation and training data timeseries
     """
@@ -438,7 +452,7 @@ def sim_data(fs,T_obs,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro',beta
     nclass = 1	    # the hardcoded number of classes
     npclass = int(size/float(nclass))    
     ndet = len(dets)               # the number of detectors
-    psds = [gen_psd(fs,T_obs,op='AdvDesign',det=d) for d in dets]
+    #psds = [gen_psd(fs,T_obs,op='AdvDesign',det=d) for d in dets]
 
     # for the noise class
     #for x in xrange(npclass):
@@ -451,12 +465,14 @@ def sim_data(fs,T_obs,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro',beta
 
     # for the signal class - loop over random masses
     cnt = 0
+    if gw_tmp:
+        size = size -1
     while cnt<size:
-        print(cnt)
 
+        print '{}: making waveform {}/{}'.format(time.asctime(),cnt,size)
         # generate a single new timeseries and chirpmass
-        par_new = gen_par(fs,T_obs,mdist=mdist,beta=beta)
-	ts_new,_,_ = gen_bbh(fs,T_obs,psds,snr=snr,dets=dets,beta=beta,par=par_new)        
+        par_new = gen_par(fs,T_obs,mdist=mdist,beta=beta,gw_tmp=False)
+        ts_new,_,_ = gen_bbh(fs,T_obs,psds,snr=snr,dets=dets,beta=beta,par=par_new)
 
 	# loop over noise realisations
         if Nnoise>0:
@@ -469,7 +485,7 @@ def sim_data(fs,T_obs,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro',beta
 	    if verb: print '{}: completed {}/{} signal samples'.format(time.asctime(),cnt-npclass,int(size/2))        
 	else:
             # just generate noise free signal
-	    ts.append(np.array([whiten_data(t,T_obs,fs,psd.data.data)[int(fs/2):-int(fs/2)] for t,psd in zip(ts_new,psds)]).reshape(ndet,-1))
+	    ts.append(np.array([whiten_data(t,T_obs,fs,psds)[int(fs/2):-int(fs/2)] for t in ts_new]).reshape(ndet,-1))
 	    par.append(par_new)
 	    yval.append(1)
             cnt += 1
@@ -483,7 +499,20 @@ def sim_data(fs,T_obs,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro',beta
     # return randomised the data
     idx = np.random.permutation(size)
     temp = [par[i] for i in idx]
-    return [ts[idx], yval[idx]], temp
+    ts, yval = ts[idx], yval[idx]
+
+    # add gw150914 template at end of set
+    if gw_tmp:
+        print '{}: making waveform {}/{}'.format(time.asctime(),size+1,size+1)
+        # generate a single new timeseries and chirpmass
+        par_new = gen_par(fs,T_obs,mdist=mdist,beta=beta,gw_tmp=gw_tmp)
+        ts_new,_,_ = gen_bbh(fs,T_obs,psds,snr=snr,dets=dets,beta=beta,par=par_new)
+
+        # just generate noise free signal
+        ts = np.concatenate((ts,np.array([whiten_data(t,T_obs,fs,psds)[int(fs/2):-int(fs/2)] for t in ts_new]).reshape(ndet,-1).reshape(1,1,fs)))
+        temp.append(par_new)
+        yval = np.append(yval,1)
+    return [ts, yval], temp
 
 # the main part of the code
 def main():
@@ -499,6 +528,17 @@ def main():
         np.random.seed(args.seed)
     safeTobs = safe*args.Tobs
 
+    # load gw150914 time series and unwhitened psd
+    unwht_wvf_file = np.loadtxt('data/LALInference_timeseries/lalinferencenest-0-H1L1-1126259462.42-0.hdf5H1-timeData.dat')[:,1]
+    wvf_psd_file = np.loadtxt('data/LALInference_timeseries/lalinferencenest-0-H1L1-1126259462.42-0.hdf5H1-PSD.dat')
+    
+    # whiten gw150914
+    wht_wvf = whiten_data(unwht_wvf_file,4,args.fsample,wvf_psd_file[:,1],flag='td')
+
+    # set psd to the same used in lalinference for gw150914
+    #psd = wvf_psd_file[-args.fsample-1:,1]
+    psd = scipy.signal.resample(wvf_psd_file[:,1],args.fsample+1)
+
     # break up the generation into blocks of args.Nblock training samples
     nblock = int(np.ceil(float(args.Nsamp)/float(args.Nblock)))
     for i in xrange(nblock):
@@ -506,7 +546,7 @@ def main():
     	# simulate the dataset and randomise it
         # only use Nnoise for the training data NOT the validation and test
     	print '{}: starting to generate data'.format(time.asctime())
-    	ts, par = sim_data(args.fsample,safeTobs,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.75,0.95])
+    	ts, par = sim_data(args.fsample,safeTobs,psd,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.4,0.6])
     	print '{}: completed generating data {}/{}'.format(time.asctime(),i+1,nblock)
 
     	# pickle the results
@@ -521,6 +561,12 @@ def main():
     	cPickle.dump(par, f, protocol=cPickle.HIGHEST_PROTOCOL)
     	f.close()
     	print '{}: saved parameter data to file'.format(time.asctime())
+
+        # save gw150914 whitened waveform
+        f = open('data/' + 'gw150914' + str(i) + '.sav', 'wb')
+        cPickle.dump(wht_wvf, f, protocol=cPickle.HIGHEST_PROTOCOL)
+        f.close()
+        print '{}: saved gw150914 timeseries data to file'.format(time.asctime())
 
     print '{}: success'.format(time.asctime())
 

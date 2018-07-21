@@ -29,6 +29,8 @@ import pickle
 from scipy.stats import uniform
 from scipy.signal import resample
 from gwpy.table import EventTable
+import keras
+import h5py
 
 # define some global params
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
@@ -36,22 +38,44 @@ n_pix = 512	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0            # the noise standard deviation (if None then use noise images)
 batch_size = 64	        # the batch size (twice this when testing discriminator)
 max_iter = 50*1000 	# the maximum number of steps or epochs
-pe_iter = 1*1000        # the maximum number of steps or epochs for pe network 
+pe_iter = 5*1000        # the maximum number of steps or epochs for pe network 
 cadence = 100		# the cadence of output images
-save_models = False	# save the generator and discriminator models
-do_pe = False		# perform parameter estimation? 
+save_models = True	# save the generator and discriminator models
+do_pe = True		# perform parameter estimation? 
 pe_cadence = 100  	# the cadence of PE outputs
 pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 25           # number of samples to view when plotting
 chi_loss = False         # set whether or not to use custom loss function
 lr = 2e-4               # learning rate for all networks
-GW150914 = True         # run on GW150914
+GW150914 = False        # run on GW150914
+gw150914_tmp = True    # run on gw150914-like template
+do_old_model = False     # run previously saved model
 
 # the locations of signal files and output directory
-signal_path = '/home/hunter.gabbard/Burst/GenNet/BBH_version/data/GW150914_data.pkl'
+signal_path = '/home/hunter.gabbard/Burst/GenNet/BBH_version/data/event_gw150914_psd.pkl'
 #pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
-out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/GW150914'
+if gw150914_tmp:
+    out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template'
+if not GW150914 and not gw150914_tmp:
+    out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/rand_bbh_results'
+
+class bbhparams:
+    def __init__(self,mc,M,eta,m1,m2,ra,dec,iota,phi,psi,idx,fmin,snr,SNR):
+        self.mc = mc
+        self.M = M
+        self.eta = eta
+        self.m1 = m1
+        self.m2 = m2
+        self.ra = ra
+        self.dec = dec
+        self.iota = iota
+        self.phi = phi
+        self.psi = psi
+        self.idx = idx
+        self.fmin = fmin
+        self.snr = snr
+        self.SNR = SNR
 
 def chisquare_Loss(yTrue,yPred):
     #K.sum( K.square(K.log(data) - K.log(wvm)/n_sig ))
@@ -182,7 +206,7 @@ def signal_pe_model():
     The PE network that learns how to convert images into parameters
     """
     model = Sequential()
-    act = 'relu'
+    act = 'tanh'
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
@@ -457,6 +481,13 @@ def main():
     os.system('mkdir -p %s' % out_path) 
 
     template_dir = 'templates/'   
+    
+    # load gw150914 lalinference posterioirs
+    if gw150914_tmp or GW150914:
+        gw150914_posterioirs = h5py.File('data/posterior_H1L1_1126259462.42-0.hdf5', 'r')
+
+    print(gw150914_posterioirs.keys())
+    exit()
 
     # load hplus and hcross pickle file
     #pickle_hp = open("%shp.pkl" % template_dir,"rb")
@@ -466,11 +497,21 @@ def main():
     #pickle_fmin = open("%sfmin.pkl" % template_dir,"rb")
     #fmin_bank = pickle.load(pickle_fmin)
 
+    # load time series template pickle file
     pickle_ts = open("%s_ts_0.sav" % template_dir,"rb")
     ts = pickle.load(pickle_ts)
 
+    # load corresponding parameters template pickle file
+    pickle_par = open("%s_params_0.sav" % template_dir,"rb")
+    par = pickle.load(pickle_par)
+
     signal_train_images = np.reshape(ts[0], (ts[0].shape[0],ts[0].shape[2]))
 
+    signal_train_pars = []
+    for k in par:
+        signal_train_pars.append([k.m1,k.m2])
+
+    signal_train_pars = np.array(signal_train_pars)
     """
     # not really sure what this is for???
     if do_pe:
@@ -491,7 +532,7 @@ def main():
 
     # randomly extract single image as the true signal
     # IMPORTANT - make sure to delete it from the training set
-    if not GW150914:
+    if not GW150914 and not gw150914_tmp:
         i = np.random.randint(0,signal_train_images.shape[0],size=1)
         signal_image = signal_train_images[i,:]
         signal_train_images = np.delete(signal_train_images,i,axis=0)
@@ -504,24 +545,41 @@ def main():
     # choose fixed signal
     # pars will be default params in function
     if GW150914:
-        input_image=load_gw_event(signal_path)
+        pickle_gw150914 = open("data/gw150914.sav","rb")
+        noise_signal = pickle.load(pickle_gw150914)
+        signal_image = pickle.load(open("data/GW150914_data.pkl","rb"))[1]
 
-    if do_pe and not GW150914:
-        signal_pars = signal_train_pars[i,:]
+    if gw150914_tmp:
+        signal_image = signal_train_images[-1,:]
+        signal_train_images = np.delete(signal_train_images,-1,axis=0)
+
+    if do_pe and not GW150914 and not gw150914_tmp:
+        signal_pars = signal_train_pars[i,:][0]
         print(signal_pars)
         signal_train_pars = np.delete(signal_train_pars,i,axis=0)    
 
+    if do_pe and gw150914_tmp:
+        signal_pars = signal_train_pars[-1,:]
+        signal_train_pars = np.delete(signal_train_pars,-1,axis=0)
+
     # combine signal and noise - this is the measured data i.e., h(t)
     if GW150914:
-        noise_signal = input_image[0][int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
-        signal_image = input_image[1][int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
+        noise_signal = noise_signal[int((4*512/2)-(0.5*512)):int((4*512/2)+(0.5*512))]
+        signal_image = signal_image[int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
 
         # resample GW150914
         noise_signal = resample(noise_signal,n_pix)
         signal_image = resample(signal_image,n_pix)
 
+        peak_diff = np.abs(np.argmax(noise_signal)-np.argmax(signal_image))
+        signal_image = np.roll(signal_image,-peak_diff)
+
+        # set signal_pars m1 and m2
+        signal_pars = [36.0,29.0]
+
     if not GW150914:
         # Generate single noise image
+        signal_image = np.reshape(signal_image, (1, 512))
         noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[1]])
 
         # combine signal and noise - this is the measured data i.e., h(t)
@@ -582,6 +640,14 @@ def main():
     ################################################
     # DO PARAMETER ESTIMATION ######################
 
+    if do_old_model:
+        if do_pe:
+            signal_pe = keras.models.load_model('./signal_pe.h5')
+        signal_discriminator.load_weights('discriminator.h5')
+        signal_discriminator_on_generator.load_weights('./signal_dis_on_gen.h5')
+        data_subtraction_on_generator.load_weights('./data_subtract_on_gen.h5')
+        generator.load_weights('generator.h5')
+
     if do_pe:
 
         """
@@ -611,17 +677,17 @@ def main():
         """
         
         # first compute true PE on a grid
-        x = np.linspace(0.25,0.75,pe_grain)
-        y = np.linspace(1.0/60.0,1.0/15.0,pe_grain)
-        xy = np.array([k for k in itprod(x,y)]).reshape(pe_grain*pe_grain,2)
-        L = []
-        for count,pars in enumerate(xy): # used to be x
-            template,_ = make_burst_waveforms(1,tau=pars[1],t_0=pars[0]) #.reshape(1,n_pix)
-	    L.append(-0.5*np.sum(((np.transpose(noise_signal)-template)/n_sig)**2))
-        L = np.array(L).reshape(pe_grain,pe_grain).transpose()
-        L = np.exp(L-np.max(L)) 
-        plot_pe_samples(None,signal_pars[0],L,'%s/pe_truelike.png' % out_path,x,y)
-        print('Completed true grid PE')
+        #x = np.linspace(0.25,0.75,pe_grain)
+        #y = np.linspace(1.0/60.0,1.0/15.0,pe_grain)
+        #xy = np.array([k for k in itprod(x,y)]).reshape(pe_grain*pe_grain,2)
+        #L = []
+        #for count,pars in enumerate(xy): # used to be x
+        #    template,_ = make_burst_waveforms(1,tau=pars[1],t_0=pars[0]) #.reshape(1,n_pix)
+	#    L.append(-0.5*np.sum(((np.transpose(noise_signal)-template)/n_sig)**2))
+        #L = np.array(L).reshape(pe_grain,pe_grain).transpose()
+        #L = np.exp(L-np.max(L)) 
+        #plot_pe_samples(None,signal_pars[0],L,'%s/pe_truelike.png' % out_path,x,y)
+        #print('Completed true grid PE')
 
         pe_losses = []         # initialise the losses for plotting
         i = 0
@@ -633,7 +699,7 @@ def main():
             idx = random.sample(np.arange(signal_train_images.shape[0]),batch_size)
             signal_batch_images = signal_train_images[idx]
             signal_batch_images = np.reshape(signal_batch_images, (signal_batch_images.shape[0],signal_batch_images.shape[1],1))
-            signal_batch_images /= np.max(signal_batch_images)
+            #signal_batch_images /= np.max(signal_batch_images)
 	    signal_batch_pars = signal_train_pars[idx]
 
 
@@ -672,7 +738,7 @@ def main():
 
     ################################################
     # LOOP OVER BATCHES ############################
-
+    
     losses = []		# initailise the losses for plotting 
     for i in range(max_iter):
         #print(len(hp.keys()))
@@ -687,7 +753,13 @@ def main():
 
 	# get random batch from images, should be real signals
         signal_batch_images = np.array(random.sample(signal_train_images, batch_size))
-        
+
+        #for j in range(batch_size):
+        #    plt.plot(signal_batch_images[j])
+        #plt.savefig('%s/batch_waveform.png' % out_path)
+        #plt.close()
+        #exit()
+
 	# first use the generator to make fake images - this is seeded with a size 100 random vector
         noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
         generated_images = generator.predict(noise)
@@ -805,17 +877,20 @@ def main():
             
 	    # plot posterior samples
             if do_pe:
+                L, x, y = None, None, None
                 # first use the generator to make MANY fake images
         	noise = np.random.uniform(size=[1000, 100], low=-1.0, high=1.0)
         	more_generated_images = generator.predict(noise)
                 pe_samples = signal_pe.predict(more_generated_images)
-                plot_pe_samples(pe_samples,signal_pars[0],L,'%s/pe_samples%05d.png' % (out_path,i), x, y, pe_std)
+                plot_pe_samples(pe_samples,signal_pars,L,'%s/pe_samples%05d.png' % (out_path,i), x, y, pe_std)
             
-
+                
 	    # save trained models
             if save_models:
 	        generator.save_weights('generator.h5', True)
-                discriminator.save_weights('discriminator.h5', True)
+                signal_discriminator.save_weights('discriminator.h5', True)
+                data_subtraction_on_generator.save_weights('data_subtract_on_gen.h5', True)
+                signal_discriminator_on_generator.save_weights('signal_dis_on_gen.h5', True)
                 if do_pe:
                     signal_pe.save_weights('signal_pe.h5', True)
 
