@@ -5,7 +5,7 @@ from keras.layers.core import Activation
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling2D, UpSampling1D, Conv2DTranspose
 from keras.layers.convolutional import Conv2D, MaxPooling2D, Conv1D, MaxPooling1D
-from keras.layers.advanced_activations import LeakyReLU
+from keras.layers.advanced_activations import LeakyReLU, PReLU
 from keras.layers.core import Flatten
 from keras import backend as K
 from keras.engine.topology import Layer
@@ -31,6 +31,7 @@ from scipy.signal import resample
 from gwpy.table import EventTable
 import keras
 import h5py
+from sympy import Eq, Symbol, solve
 
 # define some global params
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
@@ -38,7 +39,7 @@ n_pix = 512	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0            # the noise standard deviation (if None then use noise images)
 batch_size = 64	        # the batch size (twice this when testing discriminator)
 max_iter = 50*1000 	# the maximum number of steps or epochs
-pe_iter = 5*1000        # the maximum number of steps or epochs for pe network 
+pe_iter = 2*100        # the maximum number of steps or epochs for pe network 
 cadence = 100		# the cadence of output images
 save_models = True	# save the generator and discriminator models
 do_pe = True		# perform parameter estimation? 
@@ -48,7 +49,7 @@ npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 25           # number of samples to view when plotting
 chi_loss = False         # set whether or not to use custom loss function
 lr = 2e-4               # learning rate for all networks
-GW150914 = False        # run on GW150914
+GW150914 = False        # run on lalinference produced GW150914 waveform 
 gw150914_tmp = True    # run on gw150914-like template
 do_old_model = False     # run previously saved model
 
@@ -145,6 +146,7 @@ def generator_model():
     model.add(Dense(256 * 1 * int(n_pix/2), input_shape=(100,)))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
+    #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(GaussianDropout(drate))
 
@@ -156,6 +158,7 @@ def generator_model():
     model.add(Conv1D(64, 5, strides=1, padding='same'))
     model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
+    #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
     model.add(GaussianDropout(drate))
@@ -164,6 +167,7 @@ def generator_model():
     model.add(Conv1D(128, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
+    #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
     model.add(GaussianDropout(drate))
 
@@ -171,6 +175,7 @@ def generator_model():
     model.add(Conv1D(256, 5, strides=2, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
+    #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
     model.add(GaussianDropout(drate))
 
@@ -178,6 +183,7 @@ def generator_model():
     model.add(Conv1D(512, 5, strides=1, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
+    #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
     model.add(GaussianDropout(drate))
 
@@ -263,7 +269,7 @@ def signal_discriminator_model():
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.3))
-    model.add(MaxPooling1D(pool_size=2))
+    #model.add(MaxPooling1D(pool_size=2))
 
     #model.add(Conv1D(256, 5, strides=1))
     #model.add(Activation(act))
@@ -383,7 +389,7 @@ def plot_pe_accuracy(true_pars,est_pars,outfile):
     plt.savefig(outfile)
     plt.close('all')
 
-def plot_pe_samples(pe_samples,truth,like,outfile,x,y,pe_std=None):
+def plot_pe_samples(pe_samples,truth,like,outfile,x,y,lalinf_dist,pe_std=None):
     """
     Makes scatter plot of samples estimated from PE model
     """
@@ -409,8 +415,14 @@ def plot_pe_samples(pe_samples,truth,like,outfile,x,y,pe_std=None):
 
     ax1.plot([truth[0],truth[0]],[np.min(y),np.max(y)],'-k', alpha=0.5)
     ax1.plot([np.min(x),np.max(x)],[truth[1],truth[1]],'-k', alpha=0.5)
-    ax1.set_xlabel(r'Parameter 1')
-    ax1.set_ylabel(r'Parameter 2')
+
+    # plot lalinference parameters
+    #print(type(lalinf_dist[0][0][:]), float(lalinf_dist[0][0][:]))
+    #exit()
+    ax1.plot(lalinf_dist[1][:],lalinf_dist[0][:],'.b', markersize=0.8)
+
+    ax1.set_xlabel(r'm1')
+    ax1.set_ylabel(r'm2')
     #ax1.set_xlim([np.min(all_pars[:,0]),np.max(all_pars[:,0])])
     #ax1.set_ylim([np.min(all_pars[:,1]),np.max(all_pars[:,1])])
     plt.savefig(outfile)
@@ -474,20 +486,16 @@ def main():
 
     ################################################
     # READ/GENERATE DATA ###########################
-    # should add in PE stuff once you understand 
-    # how it works. Doing that now ...
 
     # setup output directory - make sure it exists
     os.system('mkdir -p %s' % out_path) 
 
     template_dir = 'templates/'   
-    
-    # load gw150914 lalinference posterioirs
-    if gw150914_tmp or GW150914:
-        gw150914_posterioirs = h5py.File('data/posterior_H1L1_1126259462.42-0.hdf5', 'r')
 
-    print(gw150914_posterioirs.keys())
-    exit()
+    # load in lalinference m1 and m2 parameters
+    pickle_lalinf_pars = open("data/gw150914_m1_m2_lainf_post.sav")
+    lalinf_pars = pickle.load(pickle_lalinf_pars)
+
 
     # load hplus and hcross pickle file
     #pickle_hp = open("%shp.pkl" % template_dir,"rb")
@@ -642,11 +650,15 @@ def main():
 
     if do_old_model:
         if do_pe:
-            signal_pe = keras.models.load_model('./signal_pe.h5')
+            signal_pe.load_weights('signal_pe.h5')
         signal_discriminator.load_weights('discriminator.h5')
-        signal_discriminator_on_generator.load_weights('./signal_dis_on_gen.h5')
-        data_subtraction_on_generator.load_weights('./data_subtract_on_gen.h5')
+        signal_discriminator_on_generator.load_weights('signal_dis_on_gen.h5')
+        data_subtraction_on_generator.load_weights('data_subtract_on_gen.h5')
         generator.load_weights('generator.h5')
+
+    # load old pe model by default
+    signal_pe.load_weights('signal_pe.h5')
+
 
     if do_pe:
 
@@ -882,7 +894,7 @@ def main():
         	noise = np.random.uniform(size=[1000, 100], low=-1.0, high=1.0)
         	more_generated_images = generator.predict(noise)
                 pe_samples = signal_pe.predict(more_generated_images)
-                plot_pe_samples(pe_samples,signal_pars,L,'%s/pe_samples%05d.png' % (out_path,i), x, y, pe_std)
+                plot_pe_samples(pe_samples,signal_pars,L,'%s/pe_samples%05d.png' % (out_path,i), x, y, lalinf_pars, pe_std)
             
                 
 	    # save trained models
