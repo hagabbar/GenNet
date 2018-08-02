@@ -1,10 +1,10 @@
-from keras.models import Sequential
-from keras.layers import Dense
+from keras.models import Sequential, Model
+from keras.layers import Dense, Input
 from keras.layers import Reshape, AlphaDropout, Dropout, GaussianDropout, GaussianNoise
 from keras.layers.core import Activation
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling2D, UpSampling1D, Conv2DTranspose
-from keras.layers.convolutional import Conv2D, MaxPooling2D, Conv1D, MaxPooling1D
+from keras.layers.convolutional import Conv2D, MaxPooling2D, Conv1D, AveragePooling1D, MaxPooling1D
 from keras.layers.advanced_activations import LeakyReLU, PReLU
 from keras.layers.core import Flatten
 from keras import backend as K
@@ -20,26 +20,34 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import os
+import time
 import glob
 import random
 import string
 from sys import exit
 import pandas as pd
 import pickle
-from scipy.stats import uniform
+import scipy
+from scipy.stats import uniform, gaussian_kde
 from scipy.signal import resample
 from gwpy.table import EventTable
 import keras
 import h5py
 from sympy import Eq, Symbol, solve
+#import statsmodels.api as sm
+
+cuda_dev = "6"
+
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
 
 # define some global params
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 512	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0            # the noise standard deviation (if None then use noise images)
-batch_size = 64	        # the batch size (twice this when testing discriminator)
+batch_size = 16         # the batch size (twice this when testing discriminator)
 max_iter = 50*1000 	# the maximum number of steps or epochs
-pe_iter = 2*100        # the maximum number of steps or epochs for pe network 
+pe_iter = 1*10000         # the maximum number of steps or epochs for pe network 
 cadence = 100		# the cadence of output images
 save_models = True	# save the generator and discriminator models
 do_pe = True		# perform parameter estimation? 
@@ -47,19 +55,22 @@ pe_cadence = 100  	# the cadence of PE outputs
 pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 25           # number of samples to view when plotting
-chi_loss = False         # set whether or not to use custom loss function
+chi_loss = False        # set whether or not to use custom loss function
 lr = 2e-4               # learning rate for all networks
 GW150914 = False        # run on lalinference produced GW150914 waveform 
 gw150914_tmp = True    # run on gw150914-like template
-do_old_model = False     # run previously saved model
+do_old_model = True     # run previously saved model for all models
+do_contours = True      # plot credibility contours on pe estimates
+do_only_old_pe_model = False # run previously saved pe model only
+contour_cadence = 100   # the cadence of PE contour plot outputs
 
 # the locations of signal files and output directory
 signal_path = '/home/hunter.gabbard/Burst/GenNet/BBH_version/data/event_gw150914_psd.pkl'
 #pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
 if gw150914_tmp:
-    out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template'
+    out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template' 
 if not GW150914 and not gw150914_tmp:
-    out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/rand_bbh_results'
+    out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/rand_bbh_results/cuda_dev_%s' % cuda_dev
 
 class bbhparams:
     def __init__(self,mc,M,eta,m1,m2,ra,dec,iota,phi,psi,idx,fmin,snr,SNR):
@@ -83,7 +94,10 @@ def chisquare_Loss(yTrue,yPred):
     #K.categorical_crossentropy(wvm, data)
     #return K.sum( K.square(K.log(yTrue) - K.log(yPred)/n_sig ), axis=-1)
     #return K.sqrt(K.sum(K.square(yPred - yTrue), axis=-1))
-    return K.sum( K.square(K.log(yTrue) - K.log(yPred)/n_sig ), axis=-1)
+    return K.sum( K.square(yTrue - yPred)/(n_sig**2), axis=-1)
+
+def mean_squared_error(y_true, y_pred):
+    return K.mean(K.square(y_pred - y_true), axis=-1)
 
 class MyLayer(Layer):
     """
@@ -104,6 +118,7 @@ class MyLayer(Layer):
     def call(self, x):
         # computes the mean of the difference between the meausured image and the generated signal
         # and returns it as a Keras object
+        # add in K cube of diff as third option
         diff = self.const - x
         return K.stack([K.mean(diff), K.mean(K.square(diff))])
 
@@ -119,7 +134,7 @@ def generator_model():
     model = Sequential()
     act = 'relu'
     momentum = 0.9
-    drate = 0.3
+    drate = 0.01
 
     
     # the first dense layer converts the input (100 random numbers) into
@@ -128,18 +143,18 @@ def generator_model():
     #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(0.3))
+    #model.add(GaussianDropout(0.3))
  
     #model.add(Dense(512))
     #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(0.3))
+    #model.add(GaussianDropout(0.3))
 
     #model.add(Dense(256))
     #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(Dropout(0.3))
+    #model.add(GaussianDropout(0.3))
 
     # the second dense layer expands this up to 32768 and again uses a
     # tanh activation function
@@ -148,7 +163,7 @@ def generator_model():
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
-    #model.add(GaussianDropout(drate))
+    model.add(GaussianDropout(drate))
 
     # then we reshape into a cube, upsample by a factor of 2 in each of
     # 2 dimensions and apply a 2D convolution with filter size 5x5
@@ -172,12 +187,12 @@ def generator_model():
     model.add(GaussianDropout(drate))
 
     #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(256, 5, strides=2, padding='same'))
+    model.add(Conv1D(512, 5, strides=2, padding='same'))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(GaussianDropout(drate))
+    #model.add(GaussianDropout(drate))
 
     model.add(UpSampling1D(size=2))
     model.add(Conv1D(512, 5, strides=1, padding='same'))
@@ -210,7 +225,7 @@ def data_subtraction_model(noise_signal,npix):
 def signal_pe_model():
     """
     The PE network that learns how to convert images into parameters
-    """
+    
     model = Sequential()
     act = 'tanh'
 
@@ -218,6 +233,7 @@ def signal_pe_model():
     # the activation is tanh and we apply a 2x2 max pooling
     model.add(Conv1D(64, 5, strides=2, input_shape=(n_pix,1), padding='same'))
     model.add(Activation(act))
+    #model.add(PReLU())
     #model.add(MaxPooling2D(pool_size=(1, 2)))
 
     # the next layer is another 2D convolution with 128 neurons and a 5x5
@@ -225,17 +241,75 @@ def signal_pe_model():
     # for input to the next dense layer
     model.add(Conv1D(128, 5, strides=2))
     model.add(Activation(act))
+    #model.add(PReLU())
     #model.add(MaxPooling2D(pool_size=(1, 2)))
+
+    model.add(Conv1D(256, 5, strides=2))
+    model.add(Activation(act))
+
+    model.add(Conv1D(512, 5, strides=2))
+    model.add(Activation(act))
+
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
     model.add(Dense(1024))
     model.add(Activation(act))
+    #model.add(PReLU())
 
     # the final dense layer has a linear activation and 2 outputs
     # we are currently testing with only 2 outputs - can be generalised
     model.add(Dense(2))
-    model.add(Activation('linear'))
+    model.add(Activation('relu'))
+    """
+
+    inputs = Input(shape=(n_pix,1))
+    act = 'tanh'
+
+    mc_branch = Conv1D(64, 5, strides=2, padding='same')(inputs)
+    mc_branch = Activation(act)(mc_branch)
+
+    mc_branch = Conv1D(128, 5, strides=2)(mc_branch)
+    mc_branch = Activation(act)(mc_branch)
+
+    mc_branch = Conv1D(256, 5, strides=2)(mc_branch)
+    mc_branch = Activation(act)(mc_branch)
+
+    mc_branch = Conv1D(512, 5, strides=2)(mc_branch)
+    mc_branch = Activation(act)(mc_branch)
+
+    mc_branch = Flatten()(mc_branch)
+
+    mc_branch = Dense(1024)(mc_branch)
+    mc_branch = Activation(act)(mc_branch)
+
+    mc_branch = Dense(1)(mc_branch)
+    mc_barnch = Activation('relu')(mc_branch)
+    
+    act = 'sigmoid' 
+    q_branch = Conv1D(64, 5, strides=2, padding='same')(inputs)
+    q_branch = Activation(act)(q_branch)
+
+    q_branch = Conv1D(128, 5, strides=2)(q_branch)
+    q_branch = Activation(act)(q_branch)
+
+    q_branch = Conv1D(256, 5, strides=2)(q_branch)
+    q_branch = Activation(act)(q_branch)
+
+    q_branch = Conv1D(512, 5, strides=2)(q_branch)
+    q_branch = Activation(act)(q_branch)
+
+    q_branch = Flatten()(q_branch)
+
+    q_branch = Dense(1024)(q_branch)
+    q_branch = Activation(act)(q_branch)
+
+    q_branch = Dense(1)(q_branch)
+    q_barnch = Activation('relu')(q_branch)
+    model = Model(
+        inputs=inputs,
+        outputs=[mc_branch, q_branch],
+        name="pe net")
 
     return model
 
@@ -362,7 +436,7 @@ def plot_losses(losses,filename,logscale=False,legend=None):
     ax2.set_ylabel(r'accuracy')
     if logscale==True:
         ax1.set_xscale("log", nonposx='clip')
-        ax2.set_xscale("log", nonposx='clip')
+        #ax2.set_xscale("log", nonposx='clip')
         ax1.set_yscale("log", nonposy='clip')
     plt.savefig(filename)
     plt.close('all')
@@ -373,14 +447,14 @@ def plot_pe_accuracy(true_pars,est_pars,outfile):
     """
     fig = plt.figure()
     ax1 = fig.add_subplot(121,aspect=1.0)
-    ax1.plot(true_pars[:,0],est_pars[:,0],'.b')
+    ax1.plot(true_pars[:,0],est_pars[0],'.b')
     ax1.plot([0,np.max(true_pars[:,0])],[0,np.max(true_pars[:,0])],'--k')
     ax1.set_xlabel(r'True parameter 1')
     ax1.set_ylabel(r'Estimated parameter 1')
     ax1.set_xlim([0,np.max(true_pars[:,0])])
     ax1.set_ylim([0,np.max(true_pars[:,0])])
     ax2 = fig.add_subplot(122,aspect=1.0)
-    ax2.plot(true_pars[:,1],est_pars[:,1],'.b')
+    ax2.plot(true_pars[:,1],est_pars[1],'.b')
     ax2.plot([0,np.max(true_pars[:,1])],[0,np.max(true_pars[:,1])],'--k')
     ax2.set_xlabel(r'True parameter 2')
     ax2.set_ylabel(r'Estimated parameter 2')
@@ -389,7 +463,7 @@ def plot_pe_accuracy(true_pars,est_pars,outfile):
     plt.savefig(outfile)
     plt.close('all')
 
-def plot_pe_samples(pe_samples,truth,like,outfile,x,y,lalinf_dist,pe_std=None):
+def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_std=None):
     """
     Makes scatter plot of samples estimated from PE model
     """
@@ -405,9 +479,27 @@ def plot_pe_samples(pe_samples,truth,like,outfile,x,y,lalinf_dist,pe_std=None):
         ax1.contour(X, Y, enc_post, [1.0-0.68], colors='b',linestyles='solid')
         ax1.contour(X, Y, enc_post, [1.0-0.9], colors='b',linestyles='dashed')
         ax1.contour(X, Y, enc_post, [1.0-0.99], colors='b',linestyles='dotted') 
+    # plot pe samples
     if pe_samples is not None:
-        ax1.plot(pe_samples[:,0],pe_samples[:,1],'.r',markersize=0.8)
-    
+        # uncomment if you want to plot scatter points
+        ax1.plot(pe_samples[0],pe_samples[1],'.r',markersize=0.8)
+  
+        if do_contours and ((index % contour_cadence == 0) and (index>0)): 
+            # plot contours for generated samples
+            contour_y = np.reshape(pe_samples[1], (pe_samples[0].shape[0]))
+            contour_x = np.reshape(pe_samples[0], (pe_samples[0].shape[0]))
+            contour_dataset = np.array([contour_x,contour_y])
+            make_contour_plot(ax1,contour_x,contour_y,contour_dataset,'Reds',flip=False)
+
+    # plot contours of lalinf distribution
+    if lalinf_dist is not None:
+        # plot lalinference parameters
+        ax1.plot(lalinf_dist[0][:],lalinf_dist[1][:],'.b', markersize=0.8)
+
+        if do_contours and ((index % contour_cadence == 0) and (index>0)):
+            # plot lalinference parameter contours
+            make_contour_plot(ax1,lalinf_dist[0][:],lalinf_dist[1][:],lalinf_dist,'Blues',flip=False)
+
     # plot pe_std error bars
     if pe_std:
         ax1.plot([truth[0]-pe_std[0],truth[0]+pe_std[0]],[truth[1],truth[1]], '-c')
@@ -416,17 +508,62 @@ def plot_pe_samples(pe_samples,truth,like,outfile,x,y,lalinf_dist,pe_std=None):
     ax1.plot([truth[0],truth[0]],[np.min(y),np.max(y)],'-k', alpha=0.5)
     ax1.plot([np.min(x),np.max(x)],[truth[1],truth[1]],'-k', alpha=0.5)
 
-    # plot lalinference parameters
-    #print(type(lalinf_dist[0][0][:]), float(lalinf_dist[0][0][:]))
-    #exit()
-    ax1.plot(lalinf_dist[1][:],lalinf_dist[0][:],'.b', markersize=0.8)
 
-    ax1.set_xlabel(r'm1')
-    ax1.set_ylabel(r'm2')
+    ax1.set_xlabel(r'mc')
+    ax1.set_ylabel(r'mass ratio')
     #ax1.set_xlim([np.min(all_pars[:,0]),np.max(all_pars[:,0])])
     #ax1.set_ylim([np.min(all_pars[:,1]),np.max(all_pars[:,1])])
-    plt.savefig(outfile)
+    plt.savefig('%s/pe_samples%05d.png' % (outfile,index))
+    plt.savefig('%s/latest/pe_samples.png' % (outfile))
     plt.close('all')
+
+
+def make_contour_plot(ax,x,y,dataset,color='Reds_d',flip=False):
+
+    # Make a 2d normed histogram
+    H,xedges,yedges=np.histogram2d(x,y,bins=20,normed=True)
+
+    if flip == True:
+        H,xedges,yedges=np.histogram2d(y,x,bins=20,normed=True)
+        dataset = np.array([dataset[1,:],dataset[0,:]])
+
+    norm=H.sum() # Find the norm of the sum
+    # Set contour levels
+    contour1=0.99
+    contour2=0.90
+    contour3=0.68
+
+    # Set target levels as percentage of norm
+    target1 = norm*contour1
+    target2 = norm*contour2
+    target3 = norm*contour3
+
+    # Take histogram bin membership as proportional to Likelihood
+    # This is true when data comes from a Markovian process
+    def objective(limit, target):
+        w = np.where(H>limit)
+        count = H[w]
+        return count.sum() - target
+
+    # Find levels by summing histogram to objective
+    level1= scipy.optimize.bisect(objective, H.min(), H.max(), args=(target1,))
+    level2= scipy.optimize.bisect(objective, H.min(), H.max(), args=(target2,))
+    level3= scipy.optimize.bisect(objective, H.min(), H.max(), args=(target3,))
+
+    # For nice contour shading with seaborn, define top level
+    level4=H.max()
+    levels=[level1,level2,level3,level4]
+
+    # Pass levels to normed kde plot
+    #sns.kdeplot(x,y,shade=True,ax=ax,n_levels=levels,cmap=color,alpha=0.5,normed=True)
+    X, Y = np.mgrid[np.min(x):np.max(x):100j, np.min(y):np.max(y):100j]
+    positions = np.vstack([X.ravel(), Y.ravel()])
+    kernel = gaussian_kde(dataset)
+    Z = np.reshape(kernel(positions).T, X.shape)
+    ax.contour(X,Y,Z,levels=levels,alpha=0.5)
+    #ax.set_aspect('equal')
+
+    return
 
 def get_enclosed_prob(x,dx):
     """
@@ -493,7 +630,7 @@ def main():
     template_dir = 'templates/'   
 
     # load in lalinference m1 and m2 parameters
-    pickle_lalinf_pars = open("data/gw150914_m1_m2_lainf_post.sav")
+    pickle_lalinf_pars = open("data/gw150914_mc_q_lalinf_post.sav")
     lalinf_pars = pickle.load(pickle_lalinf_pars)
 
 
@@ -506,18 +643,18 @@ def main():
     #fmin_bank = pickle.load(pickle_fmin)
 
     # load time series template pickle file
-    pickle_ts = open("%s_ts_0.sav" % template_dir,"rb")
+    pickle_ts = open("%s_ts_0_8000Samp.sav" % template_dir,"rb")
     ts = pickle.load(pickle_ts)
 
     # load corresponding parameters template pickle file
-    pickle_par = open("%s_params_0.sav" % template_dir,"rb")
+    pickle_par = open("%s_params_0_8000Samp.sav" % template_dir,"rb")
     par = pickle.load(pickle_par)
 
     signal_train_images = np.reshape(ts[0], (ts[0].shape[0],ts[0].shape[2]))
 
     signal_train_pars = []
     for k in par:
-        signal_train_pars.append([k.m1,k.m2])
+        signal_train_pars.append([k.mc,1.0/(k.m1/k.m2)])
 
     signal_train_pars = np.array(signal_train_pars)
     """
@@ -545,10 +682,6 @@ def main():
         signal_image = signal_train_images[i,:]
         signal_train_images = np.delete(signal_train_images,i,axis=0)
 
-    #signal_fftd = np.fft.rfft(signal_image)[0]
-    #plt.loglog(np.real(signal_fftd*np.conjugate(signal_fftd)))
-    #plt.savefig('%s/fftd_wvfm.png' % out_path)
-    #plt.close()
 
     # choose fixed signal
     # pars will be default params in function
@@ -609,10 +742,12 @@ def main():
     if do_pe:
         signal_pe = signal_pe_model()    
 
-    # setup generator training for when we subtract from the 
-    # measured data and expect Gaussian residuals.
-    # We use a mean squared error here since we want it to find 
-    # the situation where the residuals have the known mean=0, std=n_sig properties
+    """
+    setup generator training for when we subtract from the 
+    measured data and expect Gaussian residuals.
+    We use a mean squared error here since we want it to find 
+    the situation where the residuals have the known mean=0, std=n_sig properties
+    """
     if not chi_loss:
         data_subtraction_on_generator = generator_after_subtracting_noise(generator, data_subtraction)
         data_subtraction_on_generator.compile(loss='mean_squared_error', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
@@ -650,17 +785,19 @@ def main():
 
     if do_old_model:
         if do_pe:
-            signal_pe.load_weights('signal_pe.h5')
+            signal_pe = keras.models.load_model('signal_pe.h5')
+            #signal_pe.load_weights('signal_pe.h5')
         signal_discriminator.load_weights('discriminator.h5')
         signal_discriminator_on_generator.load_weights('signal_dis_on_gen.h5')
         data_subtraction_on_generator.load_weights('data_subtract_on_gen.h5')
         generator.load_weights('generator.h5')
 
-    # load old pe model by default
-    signal_pe.load_weights('signal_pe.h5')
+    if do_only_old_pe_model:
+        # load old pe model by default
+        signal_pe = keras.models.load_model('best_models/signal_pe.h5')
+        #signal_pe.load_weights('signal_pe.h5')
 
-
-    if do_pe:
+    if do_pe: #and not do_only_old_pe_model and not do_old_model:
 
         """
         # redefine training and input data
@@ -716,7 +853,7 @@ def main():
 
 
             # train only the signal PE model on the data
-            pe_loss = signal_pe.train_on_batch(signal_batch_images,signal_batch_pars)
+            pe_loss = signal_pe.train_on_batch(signal_batch_images,[signal_batch_pars[:,0],signal_batch_pars[:,1]])
 	    pe_losses.append(pe_loss)
 
 	    # output status and save images
@@ -729,48 +866,31 @@ def main():
 		# plot true vs predicted values for all training data
                 pe_samples = signal_pe.predict(np.reshape(signal_train_images, (signal_train_images.shape[0],signal_train_images.shape[1],1)))
 
-                # unnormalize parameters
-                #pe_samples[:,0] = (pe_samples[:,0] * par0_max_mean[0]) + par0_max_mean[1]
-                #pe_samples[:,1] = (pe_samples[:,1] * par1_max_mean[0]) + par1_max_mean[1]
-
                 # plot pe accuracy
 		plot_pe_accuracy(signal_train_pars,pe_samples,'%s/pe_accuracy%05d.png' % (out_path,i))
 
 	        # compute RMS difference
-                rms = [np.mean((signal_train_pars[:,k]-pe_samples[:,k])**2) for k in np.arange(2)]
+                rms = [np.mean((signal_train_pars[:,k]-pe_samples[k])**2) for k in np.arange(2)]
 
                 pe_mesg = "%d: [PE loss: %f, acc: %f, RMS: %f,%f]" % (i, pe_loss[0], pe_loss[1], rms[0], rms[1])
                 print(pe_mesg)
 
+                pe_std = [np.mean(np.abs(signal_train_pars[:,0]-pe_samples[0].reshape(pe_samples[0].shape[0]))),
+                          np.mean(np.abs(signal_train_pars[:,1]-pe_samples[1].reshape(pe_samples[0].shape[0])))]
         
-        # compute mean difference on pe estimates    
-        pe_std = [np.mean(np.abs(signal_train_pars[:,0]-pe_samples[:,0])),np.mean(np.abs(signal_train_pars[:,1]-pe_samples[:,1]))] 
-
-        print('Completed CNN PE')
+    # load old pe model by default
+    #signal_pe = keras.models.load_model('signal_pe.h5')
+    #signal_pe.load_weights('signal_pe.h5')
+    print('Completed CNN PE')
 
     ################################################
     # LOOP OVER BATCHES ############################
-    
+
     losses = []		# initailise the losses for plotting 
     for i in range(max_iter):
-        #print(len(hp.keys()))
-        #for j in range(0,len(hp.keys())):
-        #    temp = hp[j]
-        #    plt.plot(temp, alpha=0.5)
-        #plt.savefig('%s/template.png' % out_path)
-        #plt.close()
-
-        #h_idx = random.sample(list(hp.keys()), batch_size)
-        #signal_batch_images = np.array([hp[k] for k in h_idx])
 
 	# get random batch from images, should be real signals
         signal_batch_images = np.array(random.sample(signal_train_images, batch_size))
-
-        #for j in range(batch_size):
-        #    plt.plot(signal_batch_images[j])
-        #plt.savefig('%s/batch_waveform.png' % out_path)
-        #plt.close()
-        #exit()
 
 	# first use the generator to make fake images - this is seeded with a size 100 random vector
         noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
@@ -789,8 +909,12 @@ def main():
 	noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
         ny = np.zeros((batch_size,2))	# initialise the expected residual means as zero 
         ny[:,1] = n_sig**2		# initialise the expected variances as n_sig squared
+        #ny[:,2] = 0                     # initialise the expected 3rd moment of n_sig as zero
+        #ny[:,3] = 3                     # initialise the expected 4th moment of n_sig as 3.
         if not chi_loss:
             ng_loss = data_subtraction_on_generator.train_on_batch(noise, ny)
+        else:
+            ng_loss = data_subtraction_on_generator.train_on_batch(noise, [noise_signal] * batch_size)
 
 	# finally train the generator to make images that look like signals
         noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
@@ -799,8 +923,8 @@ def main():
         # fill in the loss vector for plotting
         if not chi_loss:
             losses.append([sg_loss[0],sg_loss[1],sd_loss[0],sd_loss[1],ng_loss[0],ng_loss[1]])
-        elif chi_loss:
-            losses.append([sg_loss[0],sg_loss[1],sd_loss[0],sd_loss[1]])
+        #elif chi_loss:
+        #    losses.append([sg_loss[0],sg_loss[1],sd_loss[0],sd_loss[1]])
 
 	# output status and save images
 	if ((i % cadence == 0) & (i>0)) or (i == max_iter):
@@ -810,10 +934,6 @@ def main():
                 log_mesg = "%s  [nG loss: %f, acc: %f]" % (log_mesg, ng_loss[0], ng_loss[1])
             print(log_mesg)
 
-            #plt.plot(noise_signal[0])
-            #plt.savefig('%s/training_waveforms_%s.png' % (out_path,i), dpi=750)
-            #plt.close()
-	    
             # plot original waveform
             f, (ax1, ax2, ax3) = plt.subplots(3, 1, sharey=True)
             ax = signal_image
@@ -821,10 +941,6 @@ def main():
             ax1.plot(noise_signal, color='green', alpha=0.35, linewidth=0.5)
             ax1.set_title('signal + (sig+noise)')
 
-            # plot all noise training samples
-            #ax2.plot(noise[:N_VIEWED], alpha=0.25, color='blue', linewidth=0.5)
-            #ax2.set_title('Noise Samples')
-            
             # plotable generated signals
             gen_sig = np.reshape(generated_images[:N_VIEWED], (generated_images[:N_VIEWED].shape[0],generated_images[:N_VIEWED].shape[1]))
 
@@ -841,15 +957,9 @@ def main():
 
             # plot generated signals - first image is the noise-free true signal
             ax2.plot(signal_image, color='cyan', linewidth=0.5)
-            #ax2.plot(np.transpose(gen_sig), color='blue', alpha=0.15, linewidth=0.5)
-            #ax2.plot(noise_signal, color='green', alpha=0.25, linewidth=0.5)
-            #ax2.plot(perc_90, color='#d5d8dc', linewidth=0.5, alpha=0.5)
-            #ax2.plot(perc_5, color='#d5d8dc', linewidth=0.5, alpha=0.5)
-            ax2.fill_between(np.linspace(0,len(perc_90),num=len(perc_90)), perc_90, perc_5, facecolor='#d5d8dc')
-            ax2.fill_between(np.linspace(0,len(perc_75),num=len(perc_75)), perc_75, perc_25, facecolor='#808b96')
+            ax2.fill_between(np.linspace(0,len(perc_90),num=len(perc_90)),perc_90, perc_5, lw=0,facecolor='#d5d8dc')
+            ax2.fill_between(np.linspace(0,len(perc_75),num=len(perc_75)),perc_75, perc_25, lw=0,facecolor='#808b96')
             ax2.set_title('gen + sig + (sig+noise)')
-	    #image = combine_images(generated_images,extra=signal_image.reshape(n_pix,n_pix,n_colors))
-            #image.save('%s/gen_signal%05d.png' % (out_path,i))
 	    
 	    # plot residuals - generated images subtracted from the measured image
             # the first image is the true noise realisation
@@ -857,12 +967,10 @@ def main():
             ax3.plot((residuals), color='red', alpha=0.25, linewidth=0.5)
             
             ax3.set_title('Residuals')
-            #image = combine_images(renorm(noise_signal-generated_images),extra=noise_image.reshape(n_pix,n_pix,n_colors)) 
-            #image.save('%s/residual%05d.png' % (out_path,i))
 
             # save waveforms plot
             plt.savefig('%s/waveform_results%05d.png' % (out_path,i), dpi=500)
-            #plt.savefig('%s/most_recent_waveform.png' % out_path, dpi=500)
+            plt.savefig('%s/latest/most_recent_waveform.png' % out_path, dpi=400)
             plt.close()
             """
             # plot mean and standard-dev of generated images from last batch
@@ -878,7 +986,7 @@ def main():
             ms_out.save('%s/mean_std_res_signal%05d.png' % (out_path,i))
             """
 
-            # plot loss curves - non-log and log
+            # plot loss curves - noMlog and log
             if not chi_loss:
                 plot_losses(losses,'%s/losses.png' % out_path,legend=['S-GEN','S-DIS','N-GEN'])
                 plot_losses(losses,'%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS','N-GEN'])
@@ -894,16 +1002,31 @@ def main():
         	noise = np.random.uniform(size=[1000, 100], low=-1.0, high=1.0)
         	more_generated_images = generator.predict(noise)
                 pe_samples = signal_pe.predict(more_generated_images)
-                plot_pe_samples(pe_samples,signal_pars,L,'%s/pe_samples%05d.png' % (out_path,i), x, y, lalinf_pars, pe_std)
-            
+                plot_pe_samples(pe_samples,signal_pars,L,out_path,i,x,y,lalinf_pars,pe_std)
+
+                # make pp plot
+                # plot contours for generated samples
+                #pe_samples_y = np.reshape(pe_samples[1], (pe_samples[0].shape[0]))
+                #pe_samples_x = np.reshape(pe_samples[0], (pe_samples[0].shape[0]))
+                #pe_samples = np.array([pe_samples_x,pe_samples_y])
+                #sm.ProbPlot.ppplot(sm.ProbPlot(lalinf_pars))
+                #plt.savefig('%s/pp_plot.png' % out_path) 
+                #plt.close()                          
                 
 	    # save trained models
             if save_models:
 	        generator.save_weights('generator.h5', True)
                 signal_discriminator.save_weights('discriminator.h5', True)
-                data_subtraction_on_generator.save_weights('data_subtract_on_gen.h5', True)
+                if not chi_loss:
+                    data_subtraction_on_generator.save_weights('data_subtract_on_gen.h5', True)
                 signal_discriminator_on_generator.save_weights('signal_dis_on_gen.h5', True)
                 if do_pe:
-                    signal_pe.save_weights('signal_pe.h5', True)
+                    signal_pe.save('signal_pe.h5', True)
+
+            # save posterior samples
+            #f = open('GAN_posterior_samples/posterior_samples_%05d.sav' % i, 'wb')
+            #pickle.dump(pe_samples, f)
+            #f.close()
+            #print '{}: saved posterior data to file'.format(time.asctime())
 
 main()
