@@ -5,7 +5,7 @@ from keras.layers.core import Activation
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling2D, UpSampling1D, Conv2DTranspose
 from keras.layers.convolutional import Conv2D, MaxPooling2D, Conv1D, AveragePooling1D, MaxPooling1D
-from keras.layers.advanced_activations import LeakyReLU, PReLU
+from keras.layers.advanced_activations import LeakyReLU, PReLU, ThresholdedReLU
 from keras.layers.core import Flatten
 from keras import backend as K
 from keras.engine.topology import Layer
@@ -35,8 +35,9 @@ import keras
 import h5py
 from sympy import Eq, Symbol, solve
 #import statsmodels.api as sm
+from scipy import stats
 
-cuda_dev = "6"
+cuda_dev = "3"
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
 os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
@@ -44,10 +45,10 @@ os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
 # define some global params
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 512	        # the rescaled image size (n_pix x n_pix)
-n_sig = 1.0            # the noise standard deviation (if None then use noise images)
+n_sig = 1.0          # the noise standard deviation (if None then use noise images)
 batch_size = 16         # the batch size (twice this when testing discriminator)
 max_iter = 50*1000 	# the maximum number of steps or epochs
-pe_iter = 1*10000         # the maximum number of steps or epochs for pe network 
+pe_iter = 2*100         # the maximum number of steps or epochs for pe network 
 cadence = 100		# the cadence of output images
 save_models = True	# save the generator and discriminator models
 do_pe = True		# perform parameter estimation? 
@@ -57,9 +58,9 @@ npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 25           # number of samples to view when plotting
 chi_loss = False        # set whether or not to use custom loss function
 lr = 2e-4               # learning rate for all networks
-GW150914 = False        # run on lalinference produced GW150914 waveform 
+GW150914 = True        # run on lalinference produced GW150914 waveform 
 gw150914_tmp = True    # run on gw150914-like template
-do_old_model = True     # run previously saved model for all models
+do_old_model = False     # run previously saved model for all models
 do_contours = True      # plot credibility contours on pe estimates
 do_only_old_pe_model = False # run previously saved pe model only
 contour_cadence = 100   # the cadence of PE contour plot outputs
@@ -265,6 +266,7 @@ def signal_pe_model():
 
     inputs = Input(shape=(n_pix,1))
     act = 'tanh'
+    drate = 0.3
 
     mc_branch = Conv1D(64, 5, strides=2, padding='same')(inputs)
     mc_branch = Activation(act)(mc_branch)
@@ -280,32 +282,37 @@ def signal_pe_model():
 
     mc_branch = Flatten()(mc_branch)
 
-    mc_branch = Dense(1024)(mc_branch)
-    mc_branch = Activation(act)(mc_branch)
+    #mc_branch = Dense(1024)(mc_branch)
+    #mc_branch = Activation(act)(mc_branch)
 
     mc_branch = Dense(1)(mc_branch)
     mc_barnch = Activation('relu')(mc_branch)
     
-    act = 'sigmoid' 
-    q_branch = Conv1D(64, 5, strides=2, padding='same')(inputs)
+    act = 'relu' 
+    q_branch = Conv1D(64, 32, strides=2, padding='same')(inputs)
     q_branch = Activation(act)(q_branch)
+    #q_branch = GaussianDropout(drate)(q_branch)
 
-    q_branch = Conv1D(128, 5, strides=2)(q_branch)
+    q_branch = Conv1D(128, 16, strides=2)(q_branch)
     q_branch = Activation(act)(q_branch)
+    #q_branch = GaussianDropout(drate)(q_branch)
 
-    q_branch = Conv1D(256, 5, strides=2)(q_branch)
+    q_branch = Conv1D(256, 8, strides=2)(q_branch)
     q_branch = Activation(act)(q_branch)
+    #q_branch = GaussianDropout(drate)(q_branch)
 
-    q_branch = Conv1D(512, 5, strides=2)(q_branch)
+    q_branch = Conv1D(512, 4, strides=2)(q_branch)
     q_branch = Activation(act)(q_branch)
+    #q_branch = GaussianDropout(drate)(q_branch)
 
     q_branch = Flatten()(q_branch)
 
-    q_branch = Dense(1024)(q_branch)
-    q_branch = Activation(act)(q_branch)
+    #q_branch = Dense(1024)(q_branch)
+    #q_branch = Activation(act)(q_branch)
+    #q_branch = PReLU()(q_branch)
 
     q_branch = Dense(1)(q_branch)
-    q_barnch = Activation('relu')(q_branch)
+    q_barnch = Activation('sigmoid')(q_branch)
     model = Model(
         inputs=inputs,
         outputs=[mc_branch, q_branch],
@@ -461,7 +468,31 @@ def plot_pe_accuracy(true_pars,est_pars,outfile):
     ax2.set_xlim([0,np.max(true_pars[:,1])])
     ax2.set_ylim([0,np.max(true_pars[:,1])])
     plt.savefig(outfile)
+    plt.savefig('%s/latest/pe_accuracy.png' % out_path)
     plt.close('all')
+
+def convert_q_mc_to_pars(pe_samples):
+
+    # plot other representations of mass parameters for GAN pe samples
+    post_m1 = []
+    post_m2 = []
+    eta = []
+    M = []
+    for comp in range(pe_samples[0].shape[0]):
+        m1 = Symbol('m1')
+        eqn_m1 = Eq((m1 + (m1/pe_samples[1][comp])) * (m1*(m1/pe_samples[1][comp])/(m1+(m1/pe_samples[1][comp]))**2)**(3.0/5.0), pe_samples[0][comp])
+        m1 = float(solve(eqn_m1)[0])
+        post_m1.append(m1)
+
+        m2 = Symbol('m2')
+        eqn_m2 = Eq((pe_samples[1][comp]*m2 + m2) * ((pe_samples[1][comp]*m2)*m2/((pe_samples[1][comp]*m2)+m2)**2)**(3.0/5.0), pe_samples[1][comp])
+        m2 = float(solve(eqn_m2)[0])
+        post_m2.append(m2)
+
+        M.append(m1 + m2)
+        eta.append(m1*m2/(m1+m2)**2)
+
+    return post_m1, post_m2, eta, M
 
 def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_std=None):
     """
@@ -652,6 +683,11 @@ def main():
 
     signal_train_images = np.reshape(ts[0], (ts[0].shape[0],ts[0].shape[2]))
 
+    #plt.plot(signal_train_images[0])
+    #plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/input_waveform.png')
+    #plt.close()
+    #exit()
+
     signal_train_pars = []
     for k in par:
         signal_train_pars.append([k.mc,1.0/(k.m1/k.m2)])
@@ -686,17 +722,18 @@ def main():
     # choose fixed signal
     # pars will be default params in function
     if GW150914:
-        pickle_gw150914 = open("data/gw150914.sav","rb")
-        noise_signal = pickle.load(pickle_gw150914)
-        signal_image = pickle.load(open("data/GW150914_data.pkl","rb"))[1]
+        pickle_gw150914 = open("data/gw1509140.sav","rb")
+        noise_signal = pickle.load(pickle_gw150914) * 587.351065599501
+        signal_image = pickle.load(open("data/GW150914_data.pkl","rb")) * 587.351065599501
+        #signal_image = signal_train_images[-1,:]
+        signal_train_images = np.delete(signal_train_images,-1,axis=0)
 
-    if gw150914_tmp:
+    if gw150914_tmp and not GW150914:
         signal_image = signal_train_images[-1,:]
         signal_train_images = np.delete(signal_train_images,-1,axis=0)
 
     if do_pe and not GW150914 and not gw150914_tmp:
         signal_pars = signal_train_pars[i,:][0]
-        print(signal_pars)
         signal_train_pars = np.delete(signal_train_pars,i,axis=0)    
 
     if do_pe and gw150914_tmp:
@@ -705,18 +742,20 @@ def main():
 
     # combine signal and noise - this is the measured data i.e., h(t)
     if GW150914:
-        noise_signal = noise_signal[int((4*512/2)-(0.5*512)):int((4*512/2)+(0.5*512))]
-        signal_image = signal_image[int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
+        #noise_signal = noise_signal[int((4*512/2)-(0.5*512)):int((4*512/2)+(0.5*512))]
+        #signal_image = signal_image[int((32*4096/2)-(0.5*4096)):int((32*4096/2)+(0.5*4096))]
 
         # resample GW150914
-        noise_signal = resample(noise_signal,n_pix)
+        #noise_signal = resample(noise_signal[0],n_pix)
         signal_image = resample(signal_image,n_pix)
 
         peak_diff = np.abs(np.argmax(noise_signal)-np.argmax(signal_image))
-        signal_image = np.roll(signal_image,-peak_diff)
+        signal_image = np.roll(signal_image,peak_diff)
 
         # set signal_pars m1 and m2
-        signal_pars = [36.0,29.0]
+        signal_pars = [30.0,0.79]
+        #signal_pars = signal_train_pars[-1,:]
+        #signal_train_pars = np.delete(signal_train_pars,-1,axis=0)
 
     if not GW150914:
         # Generate single noise image
@@ -891,6 +930,12 @@ def main():
 
 	# get random batch from images, should be real signals
         signal_batch_images = np.array(random.sample(signal_train_images, batch_size))
+        #for waveform in signal_batch_images:
+        #    plt.plot(waveform)
+        #plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/latest/template_waveforms.png')
+        #plt.close()
+        #print(signal_batch_images.shape)
+        #exit()
 
 	# first use the generator to make fake images - this is seeded with a size 100 random vector
         noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
@@ -913,8 +958,8 @@ def main():
         #ny[:,3] = 3                     # initialise the expected 4th moment of n_sig as 3.
         if not chi_loss:
             ng_loss = data_subtraction_on_generator.train_on_batch(noise, ny)
-        else:
-            ng_loss = data_subtraction_on_generator.train_on_batch(noise, [noise_signal] * batch_size)
+        #else:
+        #    ng_loss = data_subtraction_on_generator.train_on_batch(noise, [noise_signal] * batch_size)
 
 	# finally train the generator to make images that look like signals
         noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
@@ -1004,14 +1049,21 @@ def main():
                 pe_samples = signal_pe.predict(more_generated_images)
                 plot_pe_samples(pe_samples,signal_pars,L,out_path,i,x,y,lalinf_pars,pe_std)
 
+                #with open('gan_pe_gen_samples.pkl', 'wb') as output:
+                #    pickle.dump(pe_samples, output)
+                #exit()
+
                 # make pp plot
-                # plot contours for generated samples
                 #pe_samples_y = np.reshape(pe_samples[1], (pe_samples[0].shape[0]))
                 #pe_samples_x = np.reshape(pe_samples[0], (pe_samples[0].shape[0]))
                 #pe_samples = np.array([pe_samples_x,pe_samples_y])
                 #sm.ProbPlot.ppplot(sm.ProbPlot(lalinf_pars))
-                #plt.savefig('%s/pp_plot.png' % out_path) 
+                #stats.probplot(np.transpose(pe_samples[0].reshape(pe_samples[0].shape[0])), plot=plt)
+                #plt.savefig('%s/mass_ratio_pp_plot.png' % out_path) 
                 #plt.close()                          
+                #stats.probplot(np.transpose(pe_samples[1].reshape(pe_samples[1].shape[1])), plot=plt)
+                #plt.savefig('%s/total_mass_pp_plot.png' % out_path)
+                #plt.close()
                 
 	    # save trained models
             if save_models:
