@@ -18,10 +18,11 @@ from lal import MSUN_SI, C_SI, G_SI
 import os
 from sys import exit
 import scipy
+import pandas as pd
 
 safe = 2    # define the safe multiplication scale for the desired time length
 verb = False
-gw_tmp = True
+gw_tmp = True # add your own gw150914-like template at the end of array
 
 class bbhparams:
     def __init__(self,mc,M,eta,m1,m2,ra,dec,iota,phi,psi,idx,fmin,snr,SNR):
@@ -62,11 +63,11 @@ def parser():
     parser = argparse.ArgumentParser(prog='data_prep.py',description='generates GW data for application of deep learning networks.')
 
     # arguments for reading in a data file
-    parser.add_argument('-N', '--Nsamp', type=int, default=8000, help='the number of samples')
+    parser.add_argument('-N', '--Nsamp', type=int, default=10, help='the number of samples')
     parser.add_argument('-Nn', '--Nnoise', type=int, default=0, help='the number of noise realisations per signal, if 0 then signal only')
-    parser.add_argument('-Nb', '--Nblock', type=int, default=8000, help='the number of training samples per output file')
+    parser.add_argument('-Nb', '--Nblock', type=int, default=10, help='the number of training samples per output file')
     parser.add_argument('-f', '--fsample', type=int, default=512, help='the sampling frequency (Hz)')
-    parser.add_argument('-T', '--Tobs', type=int, default=1, help='the observation duration (sec)')
+    parser.add_argument('-T', '--Tobs', type=int, default=2, help='the observation duration (sec)')
     parser.add_argument('-s', '--snr', type=float, default=24, help='the signal integrated SNR')   
     parser.add_argument('-I', '--detectors', type=str, nargs='+',default=['H1'], help='the detectors to use')   
     parser.add_argument('-b', '--basename', type=str,default='templates/', help='output file path and basename')
@@ -177,7 +178,7 @@ def whiten_data(data,duration,sample_rate,psd,flag='td'):
     idx = np.argwhere(psd>0.0)
     invpsd = np.zeros(psd.size)
     invpsd[idx] = 1.0/psd[idx]
-    xf *= np.sqrt(2.0*invpsd/sample_rate)
+    xf *= np.sqrt(2*invpsd/sample_rate)
 
     # Detrend the data: no DC component.
     xf[0] = 0.0
@@ -263,8 +264,8 @@ def gen_par(fs,T_obs,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
     Generates a random set of parameters
     """
     # define distribution params
-    m_min = 5.0         # rest frame component masses
-    M_max = 100.0       # rest frame total mass
+    m_min = 5.0         # 5 rest frame component masses
+    M_max = 100.0       # 100 rest frame total mass
     log_m_max = np.log(M_max - m_min)
 
     m12, mc, eta = gen_masses(m_min,M_max,mdist=mdist)
@@ -330,27 +331,31 @@ def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None):
     f_low = 12.0            # lowest frequency of waveform (Hz)
     amplitude_order = 0
     phase_order = 7
-    approximant = lalsimulation.IMRPhenomD
+    f_max = 1024        # maximum allowed frequency for FD waveforms
+    #approximant = lalsimulation.IMRPhenomD
+    approximant = lalsimulation.IMRPhenomPv2
     dist = np.random.uniform(200e6,500e6)*lal.PC_SI  # put it as 1 MPc
 
     # make waveform
     # loop until we have a long enough waveform - slowly reduce flow as needed
     flag = False
     while not flag:
-        hp, hc = lalsimulation.SimInspiralChooseTDWaveform(
+        hp, hc = lalsimulation.SimInspiralChooseFDWaveform(
                     par.m1 * lal.MSUN_SI, par.m2 * lal.MSUN_SI,
                     0, 0, 0, 0, 0, 0,
                     dist,
                     par.iota, par.phi, 0,
                     0, 0,
                     1 / fs,
-                    f_low,f_low,
+                    f_low,f_max,f_low,
                     lal.CreateDict(),
                     approximant)
-        flag = True if hp.data.length>2*N else False
+        flag = True if len(np.fft.irfft(hp.data.data))>2*N else False
         f_low -= 1       # decrease by 1 Hz each time
-    orig_hp = hp.data.data
-    orig_hc = hc.data.data
+    orig_hp = np.fft.irfft(hp.data.data)
+    orig_hc = np.fft.irfft(hc.data.data)
+
+    # transform back into time domain
 
     # compute reference idx
     ref_idx = np.argmax(orig_hp**2 + orig_hc**2)
@@ -485,7 +490,7 @@ def sim_data(fs,T_obs,psds,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro'
 	    if verb: print '{}: completed {}/{} signal samples'.format(time.asctime(),cnt-npclass,int(size/2))        
 	else:
             # just generate noise free signal
-	    ts.append(np.array([whiten_data(t,T_obs,fs,psds)[int(fs/2):-int(fs/2)] for t in ts_new]).reshape(ndet,-1))
+	    ts.append(np.array([whiten_data(t,T_obs,fs,psds)[int((T_obs/2*fs)-fs/2):int((T_obs/2*fs)+fs/2)] for t in ts_new]).reshape(ndet,-1)) #[int(fs/2):-int(fs/2)]
 	    par.append(par_new)
 	    yval.append(1)
             cnt += 1
@@ -509,7 +514,8 @@ def sim_data(fs,T_obs,psds,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro'
         ts_new,_,_ = gen_bbh(fs,T_obs,psds,snr=snr,dets=dets,beta=beta,par=par_new)
 
         # just generate noise free signal
-        ts = np.concatenate((ts,np.array([whiten_data(t,T_obs,fs,psds)[int(fs/2):-int(fs/2)] for t in ts_new]).reshape(ndet,-1).reshape(1,1,fs)))
+        ts = np.concatenate((ts,np.array([whiten_data(t,T_obs,fs,psds)[int((T_obs/2*fs)-fs/2):int((T_obs/2*fs)+fs/2)] for t in ts_new]).reshape(ndet,-1).reshape(1,1,fs)))
+        #ts = np.concatenate((ts,np.array([t[int((T_obs/2*fs)-fs/2):int((T_obs/2*fs)+fs/2)] for t in ts_new]).reshape(ndet,-1).reshape(1,1,fs)))
         temp.append(par_new)
         yval = np.append(yval,1)
     return [ts, yval], temp
@@ -528,16 +534,60 @@ def main():
         np.random.seed(args.seed)
     safeTobs = safe*args.Tobs
 
-    # load gw150914 time series and unwhitened psd
-    unwht_wvf_file = np.loadtxt('data/LALInference_timeseries/lalinferencenest-0-H1L1-1126259462.42-0.hdf5H1-timeData.dat')[:,1]
-    wvf_psd_file = np.loadtxt('data/LALInference_timeseries/lalinferencenest-0-H1L1-1126259462.42-0.hdf5H1-PSD.dat')
-    
+    # load gw1 50914 frequency series and unwhitened psd
+    unwht_wvf_file = np.loadtxt('data/lalinference_nest_gw150914-like-template/lalinferencenest-0-H1L1-1126259462.0-0.hdf5H1-freqData.dat')[:,1:]
+    sig_unwht_wvf_file = np.loadtxt('data/lalinference_nest_gw150914-like-template/lalinferencenest-0-H1L1-1126259462.0-0.hdf5H1-freqDataWithInjection.dat')[:,1:]
+    unwht_wvf_file = unwht_wvf_file[:,0] + 1j*unwht_wvf_file[:,1]
+    sig_unwht_wvf_file = sig_unwht_wvf_file[:,0] + 1j*sig_unwht_wvf_file[:,1]
+
+    # set all NaN values in frequency series to zero
+    sig_unwht_wvf_file[np.isnan(sig_unwht_wvf_file) == True] = 0+0*1j
+    unwht_wvf_file[np.isnan(unwht_wvf_file) == True] = 0+0*1j
+
+    # get gw150914 template
+    h_t = sig_unwht_wvf_file - unwht_wvf_file
+    wvf_psd_file = np.loadtxt('data/lalinference_nest_gw150914-like-template/lalinferencenest-0-H1L1-1126259462.0-0.hdf5H1-PSD.dat')
+
+    unwht_wvf_file = sig_unwht_wvf_file
+
+    # transform frequency series back into time domain
+    unwht_wvf_file = np.fft.irfft(unwht_wvf_file,2048)
+    h_t = np.fft.irfft(h_t,2048)
+    plt.plot(unwht_wvf_file)
+    plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/input_waveform_unwht.png')
+    plt.close()
+
     # whiten gw150914
-    wht_wvf = whiten_data(unwht_wvf_file,4,args.fsample,wvf_psd_file[:,1],flag='td')
+    #win = tukey(4*args.fsample,alpha=1.0/8.0)
+    wht_wvf = whiten_data(unwht_wvf_file,4,args.fsample,wvf_psd_file[:,1])
+    unwht_h_t = h_t
+    h_t = whiten_data(h_t,4,args.fsample,wvf_psd_file[:,1])
+    plt.plot(wht_wvf)
+    plt.plot(h_t)
+    plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/input_waveform.png')
+    plt.close()
+    print(np.var(wht_wvf),1.0/np.var(wht_wvf))
+    print(np.std(wht_wvf),1.0/np.std(wht_wvf))
+
+    #pd.Series(wht_wvf).rolling(200).mean().plot(style='k')
+    #plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/running_mean.png')
+    #plt.close()
+
+    #pd.Series(wht_wvf).rolling(200).var().plot(style='k')
+    #plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/running_var.png')
+    #plt.close()
 
     # set psd to the same used in lalinference for gw150914
     #psd = wvf_psd_file[-args.fsample-1:,1]
-    psd = scipy.signal.resample(wvf_psd_file[:,1],args.fsample+1)
+    #psd = scipy.signal.resample(wvf_psd_file[:,1],args.fsample+1)
+    psd = wvf_psd_file[:,1]
+
+    wht_wvf = wht_wvf[int((args.Tobs*args.fsample)-args.fsample/2.0):int((args.Tobs*args.fsample)+args.fsample/2.0)]
+    h_t = h_t[int((args.Tobs*args.fsample)-args.fsample/2.0):int((args.Tobs*args.fsample)+args.fsample/2.0)]
+    plt.plot(wht_wvf)
+    #plt.plot(h_t)
+    plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/input_waveform.png')
+    plt.close()
 
     # break up the generation into blocks of args.Nblock training samples
     nblock = int(np.ceil(float(args.Nsamp)/float(args.Nblock)))
@@ -547,24 +597,34 @@ def main():
         # only use Nnoise for the training data NOT the validation and test
     	print '{}: starting to generate data'.format(time.asctime())
     	ts, par = sim_data(args.fsample,safeTobs,psd,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.4,0.6])
+        plt.plot(ts[0][-1][0] /np.max(ts[0][-1][0]))
+        plt.plot(h_t /np.max(h_t))
+        plt.savefig('whitened_geneated_template.png')
+        plt.close()
     	print '{}: completed generating data {}/{}'.format(time.asctime(),i+1,nblock)
 
     	# pickle the results
     	# save the timeseries data to file
-    	f = open(args.basename + '_ts_' + str(i) + '.sav', 'wb')
+    	f = open(args.basename + '_ts_' + str(i) + '_8000Samp' + '.sav', 'wb')
     	cPickle.dump(ts, f, protocol=cPickle.HIGHEST_PROTOCOL)
     	f.close()
     	print '{}: saved timeseries data to file'.format(time.asctime())
 
     	# save the sample parameters to file
-    	f = open(args.basename + '_params_' + str(i) + '.sav', 'wb')
+    	f = open(args.basename + '_params_' + str(i) + '_8000Samp'+ '.sav', 'wb')
     	cPickle.dump(par, f, protocol=cPickle.HIGHEST_PROTOCOL)
     	f.close()
     	print '{}: saved parameter data to file'.format(time.asctime())
 
-        # save gw150914 whitened waveform
+        # save gw150914 whitened noisy waveform
         f = open('data/' + 'gw150914' + str(i) + '.sav', 'wb')
         cPickle.dump(wht_wvf, f, protocol=cPickle.HIGHEST_PROTOCOL)
+        f.close()
+        print '{}: saved gw150914 timeseries data to file'.format(time.asctime())
+
+        # save gw150914 whitened template
+        f = open('data/' + 'GW150914_data' + '.pkl', 'wb')
+        cPickle.dump(h_t, f, protocol=cPickle.HIGHEST_PROTOCOL)
         f.close()
         print '{}: saved gw150914 timeseries data to file'.format(time.asctime())
 
