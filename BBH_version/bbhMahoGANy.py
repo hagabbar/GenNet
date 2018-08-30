@@ -37,16 +37,17 @@ from sympy import Eq, Symbol, solve
 #import statsmodels.api as sm
 from scipy import stats
 
-cuda_dev = "3"
+cuda_dev = "7"
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
 os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
 
 # define some global params
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
-n_pix = 512	        # the rescaled image size (n_pix x n_pix)
+n_pix = 1024	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0          # the noise standard deviation (if None then use noise images)
 batch_size = 16         # the batch size (twice this when testing discriminator)
+pe_batch_size = 64
 max_iter = 50*1000 	# the maximum number of steps or epochs
 pe_iter = 2*100         # the maximum number of steps or epochs for pe network 
 cadence = 100		# the cadence of output images
@@ -57,12 +58,12 @@ pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 25           # number of samples to view when plotting
 chi_loss = False        # set whether or not to use custom loss function
-lr = 2e-4               # learning rate for all networks
+lr = 9e-5               # learning rate for all networks
 GW150914 = True        # run on lalinference produced GW150914 waveform 
 gw150914_tmp = True    # run on gw150914-like template
 do_old_model = False     # run previously saved model for all models
 do_contours = True      # plot credibility contours on pe estimates
-do_only_old_pe_model = False # run previously saved pe model only
+do_only_old_pe_model = True # run previously saved pe model only
 contour_cadence = 100   # the cadence of PE contour plot outputs
 
 # the locations of signal files and output directory
@@ -135,7 +136,8 @@ def generator_model():
     model = Sequential()
     act = 'relu'
     momentum = 0.9
-    drate = 0.01
+    drate = 0.1
+    padding = 'same'
 
     
     # the first dense layer converts the input (100 random numbers) into
@@ -171,36 +173,39 @@ def generator_model():
     # and 64 neurons and again the activation is tanh 
     model.add(Reshape((int(n_pix/2), 256)))
     model.add(UpSampling1D(size=2))
-    model.add(Conv1D(64, 5, strides=1, padding='same'))
-    model.add(MaxPooling1D(pool_size=2))
+    model.add(Conv1D(64, 8, strides=1, padding=padding))
+    #model.add(MaxPooling1D(pool_size=2))
+    model.add(Activation('relu'))
+    #model.add(PReLU())
+    #model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
+    model.add(GaussianDropout(drate))
+
+    #model.add(UpSampling1D(size=2))
+    model.add(Conv1D(128, 32, strides=1, padding=padding))
+    #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
     model.add(GaussianDropout(drate))
 
-    model.add(UpSampling1D(size=2))
-    model.add(Conv1D(128, 5, strides=1, padding='same'))
-    #model.add(MaxPooling1D(pool_size=2))
-    model.add(Activation(act))
-    #model.add(PReLU())
-    #model.add(LeakyReLU(alpha=0.2))
-    model.add(GaussianDropout(drate))
-
     #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(512, 5, strides=2, padding='same'))
+    model.add(Conv1D(512, 16, strides=1, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
     #model.add(GaussianDropout(drate))
 
-    model.add(UpSampling1D(size=2))
-    model.add(Conv1D(512, 5, strides=1, padding='same'))
+    #model.add(UpSampling1D(size=2))
+    model.add(Conv1D(512, 16, strides=1, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
     model.add(GaussianDropout(drate))
 
     # if we have a 64x64 pixel dataset then we upsample once more 
@@ -208,7 +213,7 @@ def generator_model():
     #    model.add(UpSampling2D(size=(1, 2)))
     # apply another 2D convolution with filter size 5x5 and a tanh activation
     # the output shape should be n_colors x n_pix x n_pix
-    model.add(Conv1D(n_colors, 5, padding='same'))
+    model.add(Conv1D(n_colors, 5, padding=padding))
     model.add(Activation('linear')) # this should be tanh
     
     return model
@@ -224,46 +229,60 @@ def data_subtraction_model(noise_signal,npix):
     return model
 
 def signal_pe_model():
-    """
-    The PE network that learns how to convert images into parameters
+    
+    #The PE network that learns how to convert images into parameters
     
     model = Sequential()
-    act = 'tanh'
+    act = 'linear'
+    momentum = 0.9
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
-    model.add(Conv1D(64, 5, strides=2, input_shape=(n_pix,1), padding='same'))
+    model.add(Conv1D(64, 5, strides=2, input_shape=(n_pix,1), padding='valid'))
     model.add(Activation(act))
-    #model.add(PReLU())
+    model.add(PReLU())
+    #model.add(LeakyReLU(alpha=0.2))
     #model.add(MaxPooling2D(pool_size=(1, 2)))
+    #model.add(BatchNormalization(momentum=momentum))
 
     # the next layer is another 2D convolution with 128 neurons and a 5x5
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
     model.add(Conv1D(128, 5, strides=2))
     model.add(Activation(act))
-    #model.add(PReLU())
+    #model.add(LeakyReLU(alpha=0.2))
+    model.add(PReLU())
     #model.add(MaxPooling2D(pool_size=(1, 2)))
+    #model.add(BatchNormalization(momentum=momentum))
 
     model.add(Conv1D(256, 5, strides=2))
     model.add(Activation(act))
+    model.add(PReLU())
+    #model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
 
     model.add(Conv1D(512, 5, strides=2))
     model.add(Activation(act))
+    model.add(PReLU())
+    #model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
 
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
     model.add(Dense(1024))
     model.add(Activation(act))
+    model.add(PReLU())
+    #model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
     #model.add(PReLU())
 
     # the final dense layer has a linear activation and 2 outputs
     # we are currently testing with only 2 outputs - can be generalised
     model.add(Dense(2))
     model.add(Activation('relu'))
+    
     """
-
     inputs = Input(shape=(n_pix,1))
     act = 'tanh'
     drate = 0.3
@@ -289,7 +308,7 @@ def signal_pe_model():
     mc_barnch = Activation('relu')(mc_branch)
     
     act = 'relu' 
-    q_branch = Conv1D(64, 32, strides=2, padding='same')(inputs)
+    q_branch = Conv1D(64, 32, strides=2, padding='valid')(inputs)
     q_branch = Activation(act)(q_branch)
     #q_branch = GaussianDropout(drate)(q_branch)
 
@@ -317,7 +336,7 @@ def signal_pe_model():
         inputs=inputs,
         outputs=[mc_branch, q_branch],
         name="pe net")
-
+    """
     return model
 
 def signal_discriminator_model():
@@ -451,17 +470,19 @@ def plot_losses(losses,filename,logscale=False,legend=None):
 def plot_pe_accuracy(true_pars,est_pars,outfile):
     """
     Plots the true vs the estimated paranmeters from the PE training
+    Change est_pars to est_pars[0] or est_pars[1] if doing 
+    multiple pe network.
     """
     fig = plt.figure()
     ax1 = fig.add_subplot(121,aspect=1.0)
-    ax1.plot(true_pars[:,0],est_pars[0],'.b')
+    ax1.plot(true_pars[:,0],est_pars[:,0],'.b')
     ax1.plot([0,np.max(true_pars[:,0])],[0,np.max(true_pars[:,0])],'--k')
     ax1.set_xlabel(r'True parameter 1')
     ax1.set_ylabel(r'Estimated parameter 1')
     ax1.set_xlim([0,np.max(true_pars[:,0])])
     ax1.set_ylim([0,np.max(true_pars[:,0])])
     ax2 = fig.add_subplot(122,aspect=1.0)
-    ax2.plot(true_pars[:,1],est_pars[1],'.b')
+    ax2.plot(true_pars[:,1],est_pars[:,1],'.b')
     ax2.plot([0,np.max(true_pars[:,1])],[0,np.max(true_pars[:,1])],'--k')
     ax2.set_xlabel(r'True parameter 2')
     ax2.set_ylabel(r'Estimated parameter 2')
@@ -513,12 +534,12 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
     # plot pe samples
     if pe_samples is not None:
         # uncomment if you want to plot scatter points
-        ax1.plot(pe_samples[0],pe_samples[1],'.r',markersize=0.8)
+        ax1.plot(pe_samples[:,0],pe_samples[:,1],'.r',markersize=0.8)
   
         if do_contours and ((index % contour_cadence == 0) and (index>0)): 
             # plot contours for generated samples
-            contour_y = np.reshape(pe_samples[1], (pe_samples[0].shape[0]))
-            contour_x = np.reshape(pe_samples[0], (pe_samples[0].shape[0]))
+            contour_y = np.reshape(pe_samples[:,1], (pe_samples[:,1].shape[0]))
+            contour_x = np.reshape(pe_samples[:,0], (pe_samples[:,0].shape[0]))
             contour_dataset = np.array([contour_x,contour_y])
             make_contour_plot(ax1,contour_x,contour_y,contour_dataset,'Reds',flip=False)
 
@@ -545,7 +566,7 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
     #ax1.set_xlim([np.min(all_pars[:,0]),np.max(all_pars[:,0])])
     #ax1.set_ylim([np.min(all_pars[:,1]),np.max(all_pars[:,1])])
     plt.savefig('%s/pe_samples%05d.png' % (outfile,index))
-    plt.savefig('%s/latest/pe_samples.png' % (outfile))
+    plt.savefig('%s/latest/pe_samples.png' % (outfile), dpi=400)
     plt.close('all')
 
 
@@ -723,8 +744,18 @@ def main():
     # pars will be default params in function
     if GW150914:
         pickle_gw150914 = open("data/gw1509140.sav","rb")
-        noise_signal = pickle.load(pickle_gw150914) * 587.351065599501
-        signal_image = pickle.load(open("data/GW150914_data.pkl","rb")) * 587.351065599501
+        noise_signal = np.reshape(pickle.load(pickle_gw150914) * 1079.22,(n_pix,1))
+        signal_image = pickle.load(open("data/GW150914_data.pkl","rb")) * 1079.22
+        noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[0]])
+        gan_noise_signal = np.transpose(signal_image + noise_image)
+
+        #plt.plot(lal_noise_signal, alpha=0.5,label='lal_noise')
+        #plt.plot(gan_noise_signal, alpha=0.5,label='numpy_noise')
+        #plt.legend()
+        #plt.hist(noise_signal,100)
+        #plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/input_waveform.png')
+        #plt.close()
+        #exit()
         #signal_image = signal_train_images[-1,:]
         signal_train_images = np.delete(signal_train_images,-1,axis=0)
 
@@ -753,7 +784,8 @@ def main():
         signal_image = np.roll(signal_image,peak_diff)
 
         # set signal_pars m1 and m2
-        signal_pars = [30.0,0.79]
+        if not gw150914_tmp:
+            signal_pars = [30.0,0.79]
         #signal_pars = signal_train_pars[-1,:]
         #signal_train_pars = np.delete(signal_train_pars,-1,axis=0)
 
@@ -795,7 +827,7 @@ def main():
     signal_discriminator_on_generator = generator_containing_signal_discriminator(generator, signal_discriminator)
     set_trainable(signal_discriminator, False)	# set the discriminator as not trainable for this step
     if not chi_loss:
-        signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
+        signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-4, beta_1=0.5), metrics=['accuracy'])
     elif chi_loss:
         signal_discriminator_on_generator.compile(loss=chisquare_Loss, optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
 
@@ -884,15 +916,21 @@ def main():
         for i in range(pe_iter):
 	
             # get random batch from images
-            idx = random.sample(np.arange(signal_train_images.shape[0]),batch_size)
+            idx = random.sample(np.arange(signal_train_images.shape[0]),pe_batch_size)
             signal_batch_images = signal_train_images[idx]
             signal_batch_images = np.reshape(signal_batch_images, (signal_batch_images.shape[0],signal_batch_images.shape[1],1))
             #signal_batch_images /= np.max(signal_batch_images)
 	    signal_batch_pars = signal_train_pars[idx]
-
+   
+            # normalize pars to be between 0 and 1
+            #par1_norm = np.max(signal_batch_pars[:,0])
+            #par2_norm = np.max(signal_batch_pars[:,1])
+            #signal_batch_pars[:,0] /= par1_norm
+            signal_batch_pars[:,0] /= 50.0
 
             # train only the signal PE model on the data
-            pe_loss = signal_pe.train_on_batch(signal_batch_images,[signal_batch_pars[:,0],signal_batch_pars[:,1]])
+            #pe_loss = signal_pe.train_on_batch(signal_batch_images,[signal_batch_pars[:,0],signal_batch_pars[:,1]])
+            pe_loss = signal_pe.train_on_batch(signal_batch_images,signal_batch_pars)
 	    pe_losses.append(pe_loss)
 
 	    # output status and save images
@@ -903,20 +941,26 @@ def main():
                 plot_losses(pe_losses,'%s/pe_losses_logscale.png' % out_path,logscale=True,legend=['PE-GEN'])
 
 		# plot true vs predicted values for all training data
+                #pe_samples = signal_pe.predict(np.reshape(signal_train_images, (signal_train_images.shape[0],signal_train_images.shape[1],1)))
                 pe_samples = signal_pe.predict(np.reshape(signal_train_images, (signal_train_images.shape[0],signal_train_images.shape[1],1)))
+
+                # rescale output
+                #pe_samples[:,0] *= par1_norm
+                pe_samples[:,0] *= 50.0
 
                 # plot pe accuracy
 		plot_pe_accuracy(signal_train_pars,pe_samples,'%s/pe_accuracy%05d.png' % (out_path,i))
 
 	        # compute RMS difference
-                rms = [np.mean((signal_train_pars[:,k]-pe_samples[k])**2) for k in np.arange(2)]
+                rms = [np.mean((signal_train_pars[:,k]-pe_samples[:,k])**2) for k in np.arange(2)]
 
                 pe_mesg = "%d: [PE loss: %f, acc: %f, RMS: %f,%f]" % (i, pe_loss[0], pe_loss[1], rms[0], rms[1])
                 print(pe_mesg)
 
-                pe_std = [np.mean(np.abs(signal_train_pars[:,0]-pe_samples[0].reshape(pe_samples[0].shape[0]))),
-                          np.mean(np.abs(signal_train_pars[:,1]-pe_samples[1].reshape(pe_samples[0].shape[0])))]
-        
+                pe_std = [np.mean(np.abs(signal_train_pars[:,0]-pe_samples[:,0].reshape(pe_samples[:,0].shape[0]))),
+                          np.mean(np.abs(signal_train_pars[:,1]-pe_samples[:,1].reshape(pe_samples[:,0].shape[0])))]
+    if save_models and do_pe:
+        signal_pe.save('signal_pe.h5', True)        
     # load old pe model by default
     #signal_pe = keras.models.load_model('signal_pe.h5')
     #signal_pe.load_weights('signal_pe.h5')
@@ -1001,7 +1045,7 @@ def main():
                 perc_5.append(np.percentile(gen_sig[:,n], 5))
 
             # plot generated signals - first image is the noise-free true signal
-            ax2.plot(signal_image, color='cyan', linewidth=0.5)
+            ax2.plot(signal_image, color='cyan', linewidth=0.5, alpha=0.5)
             ax2.fill_between(np.linspace(0,len(perc_90),num=len(perc_90)),perc_90, perc_5, lw=0,facecolor='#d5d8dc')
             ax2.fill_between(np.linspace(0,len(perc_75),num=len(perc_75)),perc_75, perc_25, lw=0,facecolor='#808b96')
             ax2.set_title('gen + sig + (sig+noise)')
@@ -1047,6 +1091,7 @@ def main():
         	noise = np.random.uniform(size=[1000, 100], low=-1.0, high=1.0)
         	more_generated_images = generator.predict(noise)
                 pe_samples = signal_pe.predict(more_generated_images)
+                pe_samples[:,0] *= 50.0
                 plot_pe_samples(pe_samples,signal_pars,L,out_path,i,x,y,lalinf_pars,pe_std)
 
                 #with open('gan_pe_gen_samples.pkl', 'wb') as output:
@@ -1072,8 +1117,6 @@ def main():
                 if not chi_loss:
                     data_subtraction_on_generator.save_weights('data_subtract_on_gen.h5', True)
                 signal_discriminator_on_generator.save_weights('signal_dis_on_gen.h5', True)
-                if do_pe:
-                    signal_pe.save('signal_pe.h5', True)
 
             # save posterior samples
             #f = open('GAN_posterior_samples/posterior_samples_%05d.sav' % i, 'wb')
