@@ -168,7 +168,7 @@ def generator_model():
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(PReLU())
-    #model.add(BatchNormalization(momentum=momentum))
+    model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
 
     # then we reshape into a cube, upsample by a factor of 2 in each of
@@ -181,7 +181,7 @@ def generator_model():
     model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
+    model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
     
     #model.add(UpSampling1D(size=2))
@@ -190,7 +190,7 @@ def generator_model():
     model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
+    model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
 
     #model.add(UpSampling1D(size=2))
@@ -199,7 +199,7 @@ def generator_model():
     model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
+    model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
 
     #model.add(UpSampling1D(size=2))
@@ -208,7 +208,7 @@ def generator_model():
     model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
+    model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
 
     #model.add(UpSampling1D(size=2))
@@ -375,7 +375,7 @@ def signal_discriminator_model():
     momentum=0.8
     weights = 'glorot_uniform'
     drate = 0.5
-    act = 'tanh'
+    act = 'linear'
 
     model = Sequential()
 
@@ -384,7 +384,7 @@ def signal_discriminator_model():
     # the activation is tanh and we apply a 2x2 max pooling
     model.add(Conv1D(64, 5, kernel_initializer=weights, input_shape=(n_pix,1), strides=2, padding='same'))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(LeakyReLU(alpha=0.2))
     #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.3))
@@ -393,19 +393,19 @@ def signal_discriminator_model():
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv1D(512, 5, kernel_initializer=weights, strides=1))
-    model.add(Activation(act))
+    #model.add(Conv1D(512, 5, kernel_initializer=weights, strides=1))
+    #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(PReLU())
-    model.add(BatchNormalization(momentum=momentum))
+    #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
-    model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=2))
-    model.add(Activation(act))
+    #model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=2))
+    #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(PReLU())
-    model.add(BatchNormalization(momentum=momentum))
+    #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
@@ -999,7 +999,7 @@ def main():
     # This uses a binary cross entropy loss since we are just 
     # discriminating between real and fake signals
     set_trainable(signal_discriminator, True)	# set it back to being trainable
-    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
+    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=9e-5, beta_1=0.5), metrics=['accuracy'])
     #elif chi_loss:
     #    signal_discriminator.compile(loss=chisquare_Loss, optimizer=Adam(lr=9e-5, beta_1=0.5), metrics=['accuracy'])
 
