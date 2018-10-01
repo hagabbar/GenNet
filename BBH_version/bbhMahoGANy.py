@@ -10,7 +10,7 @@ from keras.layers.advanced_activations import LeakyReLU, PReLU, ThresholdedReLU,
 from keras.layers.core import Flatten
 from keras import backend as K
 from keras.engine.topology import Layer
-from keras.optimizers import Adam
+from keras.optimizers import Adam, SGD
 from tensorflow.examples.tutorials.mnist import input_data
 from scipy.stats import multivariate_normal as mvn
 from scipy.special import logit, expit
@@ -393,11 +393,11 @@ def signal_discriminator_model():
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    #model.add(Conv1D(512, 5, kernel_initializer=weights, strides=1))
-    #model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(Conv1D(512, 5, kernel_initializer=weights, strides=1))
+    model.add(Activation(act))
+    model.add(LeakyReLU(alpha=0.2))
     #model.add(PReLU())
-    #model.add(BatchNormalization(momentum=momentum))
+    model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
@@ -993,13 +993,13 @@ def main():
     if not chi_loss:
         signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
     elif chi_loss:
-        signal_discriminator_on_generator.compile(loss=chisquare_Loss, optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
+        signal_discriminator_on_generator.compile(loss=chisquare_Loss, optimizer=SGD(lr=lr), metrics=['accuracy'])
 
     # setup trainin on signal discriminator model
     # This uses a binary cross entropy loss since we are just 
     # discriminating between real and fake signals
     set_trainable(signal_discriminator, True)	# set it back to being trainable
-    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=9e-5, beta_1=0.5), metrics=['accuracy'])
+    signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
     #elif chi_loss:
     #    signal_discriminator.compile(loss=chisquare_Loss, optimizer=Adam(lr=9e-5, beta_1=0.5), metrics=['accuracy'])
 
