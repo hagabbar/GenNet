@@ -23,6 +23,7 @@ import pandas as pd
 safe = 2    # define the safe multiplication scale for the desired time length
 verb = False
 gw_tmp = True # add your own gw150914-like template at the end of array
+sample_num = 500000
 
 class bbhparams:
     def __init__(self,mc,M,eta,m1,m2,ra,dec,iota,phi,psi,idx,fmin,snr,SNR):
@@ -61,12 +62,11 @@ def tukey(M,alpha=0.5):
 def parser():
     """Parses command line arguments"""
     parser = argparse.ArgumentParser(prog='data_prep.py',description='generates GW data for application of deep learning networks.')
-    sample_num = 5000
 
     # arguments for reading in a data file
     parser.add_argument('-N', '--Nsamp', type=int, default=sample_num, help='the number of samples')
     parser.add_argument('-Nn', '--Nnoise', type=int, default=0, help='the number of noise realisations per signal, if 0 then signal only')
-    parser.add_argument('-Nb', '--Nblock', type=int, default=sample_num, help='the number of training samples per output file')
+    parser.add_argument('-Nb', '--Nblock', type=int, default=100000, help='the number of training samples per output file')
     parser.add_argument('-f', '--fsample', type=int, default=1024, help='the sampling frequency (Hz)')
     parser.add_argument('-T', '--Tobs', type=int, default=2, help='the observation duration (sec)')
     parser.add_argument('-s', '--snr', type=float, default=56, help='the signal integrated SNR')   
@@ -306,6 +306,12 @@ def gen_par(fs,T_obs,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
     fmin = get_fmin(M,eta,int(idx-sidx)/fs)
     if verb: print '{}: computed starting frequency = {} Hz'.format(time.asctime(),fmin)
 
+    ra = 2.21535724066
+    dec = -1.23649695537
+    iota = 2.5#-0.8011436155469337
+    phi = 1.5
+    psi = 1.75 
+
     # store params
     par = bbhparams(mc,M,eta,m12[0],m12[1],ra,dec,iota,phi,psi,idx,fmin,None,None)
 
@@ -341,7 +347,7 @@ def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None,gw_tmp=F
     #approximant = lalsimulation.IMRPhenomD
     approximant = lalsimulation.IMRPhenomPv2
     dist = np.random.uniform(200e6,500e6)*lal.PC_SI  # put it as 1 MPc
-    #dist = 410e6*lal.PC_SI
+    dist = 410e6*lal.PC_SI
     if gw_tmp:
         dist = 410e6*lal.PC_SI
 
@@ -480,19 +486,20 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det):
     tvec = np.arange(len(hp))/float(fs)
 
     # compute antenna response and apply
-    Fp,Fc,_,_ = antenna.response(0, ra, dec, 0, psi, 'radians', det )
+    Fp,Fc,_,_ = antenna.response(1126259462.0, ra, dec, 0, psi, 'radians', det )
     ht = hp*Fp + hc*Fc     # overwrite the timeseries vector to reuse it
 
     # compute time delays relative to Earth centre
     frDetector =  lalsimulation.DetectorPrefixToLALDetector(det)
-    tdelay = lal.TimeDelayFromEarthCenter(frDetector.location,ra,dec,0)
+    tdelay = lal.TimeDelayFromEarthCenter(frDetector.location,ra,dec,1126259462.0)
     if verb: print '{}: computed {} Earth centre time delay = {}'.format(time.asctime(),det,tdelay)
 
     # interpolate to get time shifted signal
     ht_tck = interpolate.splrep(tvec, ht, s=0)
     hp_tck = interpolate.splrep(tvec, hp, s=0)
     hc_tck = interpolate.splrep(tvec, hc, s=0)
-    tnew = tvec - tdelay
+    if gw_tmp: tnew = tvec - tdelay
+    else: tnew = tvec - tdelay + (np.random.uniform(low=-0.037370920181274414,high=0.0055866241455078125))
     new_ht = interpolate.splev(tnew, ht_tck, der=0,ext=1)
     new_hp = interpolate.splev(tnew, hp_tck, der=0,ext=1)
     new_hc = interpolate.splev(tnew, hc_tck, der=0,ext=1)
@@ -581,6 +588,7 @@ def main():
     """
     snr_mn = 0.0
     snr_cnt = 0
+    lalinf_out_loc = '/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_MassNotFixed/lalinferencenest/engine'
 
     # get the command line args
     args = parser()
@@ -589,8 +597,8 @@ def main():
     safeTobs = safe*args.Tobs
 
     # load gw1 50914 frequency series and unwhitened psd
-    unwht_wvf_file = np.loadtxt('data/lalinference_nest_gw150914-like-template/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-freqData.dat')[:,1:]
-    sig_unwht_wvf_file = np.loadtxt('data/lalinference_nest_gw150914-like-template/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-freqDataWithInjection.dat')[:,1:]
+    unwht_wvf_file = np.loadtxt('%s/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-freqData.dat' % lalinf_out_loc)[:,1:]
+    sig_unwht_wvf_file = np.loadtxt('%s/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-freqDataWithInjection.dat' % lalinf_out_loc)[:,1:]
     unwht_wvf_file = np.add(unwht_wvf_file[:,0],1j*unwht_wvf_file[:,1])
     sig_unwht_wvf_file = np.add(sig_unwht_wvf_file[:,0],1j*sig_unwht_wvf_file[:,1])
     plt.plot(unwht_wvf_file)
@@ -603,7 +611,7 @@ def main():
 
     # get gw150914 template
     h_t = sig_unwht_wvf_file - unwht_wvf_file
-    wvf_psd_file = np.loadtxt('data/lalinference_nest_gw150914-like-template/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-PSD.dat')
+    wvf_psd_file = np.loadtxt('%s/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-PSD.dat' % lalinf_out_loc)
 
     unwht_wvf_file = sig_unwht_wvf_file
 
@@ -654,7 +662,7 @@ def main():
         # only use Nnoise for the training data NOT the validation and test
     	print '{}: starting to generate data'.format(time.asctime())
         #psd = scipy.signal.resample(psd,257)
-    	ts, par = sim_data(args.fsample,safeTobs,psd,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.4,0.6])
+    	ts, par = sim_data(args.fsample,safeTobs,psd,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.45,0.55])
         # plot actual waveforms
         for n in range(ts[0].shape[0]):
             ts[0][n,0,:] *= 817.98
@@ -666,13 +674,13 @@ def main():
 
     	# pickle the results
     	# save the timeseries data to file
-    	f = open(args.basename + '_ts_' + str(i) + '_5000Samp' + '.sav', 'wb')
+    	f = open(args.basename + '_ts_' + str(i) + '_' + str(sample_num) + 'Samp' + '.sav', 'wb')
     	cPickle.dump(ts, f, protocol=cPickle.HIGHEST_PROTOCOL)
     	f.close()
     	print '{}: saved timeseries data to file'.format(time.asctime())
 
     	# save the sample parameters to file
-    	f = open(args.basename + '_params_' + str(i) + '_5000Samp'+ '.sav', 'wb')
+    	f = open(args.basename + '_params_' + str(i) + '_' + str(sample_num) + 'Samp'+ '.sav', 'wb')
     	cPickle.dump(par, f, protocol=cPickle.HIGHEST_PROTOCOL)
     	f.close()
     	print '{}: saved parameter data to file'.format(time.asctime())

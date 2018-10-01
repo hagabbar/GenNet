@@ -20,16 +20,27 @@ import os
 from sys import exit
 import scipy
 import pickle
+from sympy import Eq, Symbol, solve
 
 
 safe = 2    # define the safe multiplication scale for the desired time length
 verb = False
 gw_tmp = True
-batch_size = 3800
+batch_size = 4390
+# load gan pe samples. TEMPORARY!!!
+with open('gan_pe_samples.sav', 'rb') as rfp:
+    gan_pe_post = np.array(pickle.load(rfp))
+with open('gan_pe_waveforms.sav', 'rb') as rfp:
+    gan_pe_waveforms = np.array(pickle.load(rfp))
+# load in lalinference m1 and m2 parameters
+pickle_lalinf_pars = open("data/gw150914_mc_q_lalinf_post.sav")
+lalinf_pars = pickle.load(pickle_lalinf_pars)
+post_q = gan_pe_post[1]
+post_mc = gan_pe_post[0]
 
-gan_post = pickle.load(open('/home/hunter.gabbard/Burst/GenNet/BBH_version/data/gw150914_m1_m2_lainf_post.sav'))
+gan_post = pickle.load(open('/home/hunter.gabbard/CBC/GenNet/BBH_version/data/gw150914_m1_m2_lainf_post.sav'))
 out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template'
-gw150914_posteriors = pd.read_hdf('/home/hunter.gabbard/Burst/GenNet/BBH_version/data/posterior_H1_1126259462-0.hdf5')
+gw150914_posteriors = pd.read_hdf('/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_MassNotFixed/lalinferencenest/posterior_samples/posterior_H1_1126259462-0.hdf5','lalinference/lalinference_nest/posterior_samples')
 
 gan_post = np.transpose(gan_post)
 
@@ -72,9 +83,9 @@ def parser():
     parser = argparse.ArgumentParser(prog='data_prep.py',description='generates GW data for application of deep learning networks.')
 
     # arguments for reading in a data file
-    parser.add_argument('-N', '--Nsamp', type=int, default=3800, help='the number of samples')
+    parser.add_argument('-N', '--Nsamp', type=int, default=4390, help='the number of samples')
     parser.add_argument('-Nn', '--Nnoise', type=int, default=0, help='the number of noise realisations per signal, if 0 then signal only')
-    parser.add_argument('-Nb', '--Nblock', type=int, default=3800, help='the number of training samples per output file')
+    parser.add_argument('-Nb', '--Nblock', type=int, default=4390, help='the number of training samples per output file')
     parser.add_argument('-f', '--fsample', type=int, default=1024, help='the sampling frequency (Hz)')
     parser.add_argument('-T', '--Tobs', type=int, default=2, help='the observation duration (sec)')
     parser.add_argument('-s', '--snr', type=float, default=56, help='the signal integrated SNR')   
@@ -278,10 +289,26 @@ def gen_par(fs,T_obs,index,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
     log_m_max = np.log(M_max - m_min)
 
     #m12, mc, eta = gen_masses(m_min,M_max,mdist=mdist)
-    m12 = [gan_post[index,1],gan_post[index,0]]
+    #m12 = [gan_post[index,1],gan_post[index,0]]
+    if index==0:
+        idx = np.argsort(post_q,axis=0)[200][0]
+        m1 = Symbol('m1')
+        eqn_m1 = Eq((m1 + (m1/post_q[idx])) * (m1*(m1/post_q[idx])/(m1+(m1/post_q[idx]))**2)**(3.0/5.0), post_mc[idx])
+        post_m1 = float(solve(eqn_m1)[0])
+
+        post_m2 = ((float(post_q[idx]))*post_m1)
+        print(post_m1,post_m2)
+        m12 = [post_m1,post_m2]
+    #if index==1:
+    #    index = int(np.random.uniform(low=0,high=4390))
+    #    index = np.argmin(gan_post[:,0]/gan_post[index,1])
+    #    m12 = [gan_post[index,1],gan_post[index,0]]
+    #    print(m12[1]/m12[0])
+    #    exit()
+    #m12 = [36.0, 29.0]
     eta = m12[0]*m12[1]/(m12[0]+m12[1])**2
-    #mc = np.sum(m12)*eta**(3.0/5.0)
-    mc = gw150914_posteriors['mc'][index]
+    mc = np.sum(m12)*eta**(3.0/5.0)
+    #mc = gw150914_posteriors['mc'][index]
     M = np.sum(m12)
     if verb: print '{}: selected bbh masses = {},{} (chirp mass = {})'.format(time.asctime(),m12[0],m12[1],mc)
 
@@ -307,11 +334,11 @@ def gen_par(fs,T_obs,index,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
     dec = gw150914_posteriors['dec'][index]
     if verb: print '{}: selected bbh sky position = {},{}'.format(time.asctime(),ra,dec)
 
-    #ra = 2.21535724066
-    #dec = -1.23649695537
-    #iota = 2.5
-    #phi = 1.5
-    #psi = 1.75
+    ra = 2.21535724066
+    dec = -1.23649695537
+    iota = 2.5#-0.8011436155469337
+    phi = 1.5
+    psi = 1.75
 
     # pick new random max amplitude sample location - within beta fractions
     # and slide waveform to that location
@@ -327,7 +354,9 @@ def gen_par(fs,T_obs,index,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
 
     # compute SNR of pre-whitened data
     fmin = get_fmin(M,eta,int(idx-sidx)/fs)
-    idx = int((T_obs * fs) / 2) - 4
+    #print((((T_obs * fs)) * (1126259462.0 - gw150914_posteriors['time'][index])))
+    #idx = int((T_obs * fs) / 2) - 4 
+    #idx = int(((T_obs * fs) / 2) + (((T_obs * fs)/2) * (1126259462.0 - gw150914_posteriors['time'][index]))) - 4
     if verb: print '{}: computed starting frequency = {} Hz'.format(time.asctime(),fmin)
 
     # store params
@@ -338,6 +367,7 @@ def gen_par(fs,T_obs,index,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
     set.
     """
     if gw_tmp:
+        idx = int((T_obs * fs) / 2) - 4
         m1, m2 = 36.0, 29.0
         eta = m1*m2/(m1+m2)**2
         M = m1 + m2
@@ -346,7 +376,7 @@ def gen_par(fs,T_obs,index,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
         
         ra = 2.21535724066
         dec = -1.23649695537
-        iota = 2.5  
+        iota = 2.5#-0.8011436155469337  
         phi = 1.5
         psi = 1.75
         
@@ -366,6 +396,7 @@ def gen_bbh(fs,T_obs,idx,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None, gw_
     f_max = 512
     approximant = lalsimulation.IMRPhenomPv2
     dist = gw150914_posteriors['dist'][idx] * 1e6*lal.PC_SI
+    dist = 410e6 * lal.PC_SI
     if gw_tmp:
         dist = 410e6 * lal.PC_SI    
 
@@ -393,8 +424,8 @@ def gen_bbh(fs,T_obs,idx,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None, gw_
 
     #orig_hp = np.roll(np.fft.irfft(hp.data.data.real + 1j*hp.data.data.imag,T_obs*fs),-fs)
     #orig_hc = np.roll(np.fft.irfft(hc.data.data.real + 1j*hc.data.data.imag,T_obs*fs),-fs)
-    orig_hp = np.roll(np.fft.irfft(whiten_hp,T_obs*fs),-fs)
-    orig_hc = np.roll(np.fft.irfft(whiten_hc,T_obs*fs),-fs)
+    orig_hp = np.roll(np.fft.irfft(whiten_hp,T_obs*fs),int(-fs))
+    orig_hc = np.roll(np.fft.irfft(whiten_hc,T_obs*fs),int(-fs))
 
     # compute reference idx
     ref_idx = np.argmax(orig_hp**2 + orig_hc**2)
@@ -433,6 +464,7 @@ def gen_bbh(fs,T_obs,idx,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None, gw_
             ts[j,:] = ht_temp[:N]
             hp[j,:] = hp_temp[:N]
             hc[j,:] = hc_temp[:N]
+
 
     	# apply aggressive window to cut out signal in central region
     	# window is non-flat for 1/8 of desired Tobs
@@ -482,7 +514,8 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det,index,gw_tmp=False):
     ht_tck = interpolate.splrep(tvec, ht, s=0)
     hp_tck = interpolate.splrep(tvec, hp, s=0)
     hc_tck = interpolate.splrep(tvec, hc, s=0)
-    tnew = tvec - tdelay
+    if gw_tmp: tnew = tvec - tdelay
+    else: tnew = tvec - tdelay + ((1126259462.0 - gw150914_posteriors['time'][index]))
     new_ht = interpolate.splev(tnew, ht_tck, der=0,ext=1)
     new_hp = interpolate.splev(tnew, hp_tck, der=0,ext=1)
     new_hc = interpolate.splev(tnew, hc_tck, der=0,ext=1)
@@ -525,8 +558,28 @@ def sim_data(fs,T_obs,psds,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro'
         #if gan_post[cnt,0] < 0 or gan_post[cnt,1] < 0:
         #    cnt+=1
         #    continue
-        par_new = gen_par(fs,T_obs,cnt,mdist=mdist,beta=beta,gw_tmp=False)
-        ts_new,_,_ = gen_bbh(fs,T_obs,cnt,psds,snr=snr,dets=dets,beta=beta,par=par_new)
+        #par_new = gen_par(fs,T_obs,cnt,mdist=mdist,beta=beta,gw_tmp=False)
+        #ts_new,_,_ = gen_bbh(fs,T_obs,cnt,psds,snr=snr,dets=dets,beta=beta,par=par_new)
+
+        if cnt == 0:
+            cnt = 0
+            gan_par = gen_par(fs,T_obs,cnt,mdist=mdist,beta=beta,gw_tmp=False)
+            gan_ts,_,_ = gen_bbh(fs,T_obs,cnt,psds,snr=snr,dets=dets,beta=beta,par=gan_par)
+               
+            
+        #elif cnt == 1:
+        #    cnt += 1
+        #    continue
+            #cnt = 1
+            #lal_par = gen_par(fs,T_obs,cnt,mdist=mdist,beta=beta,gw_tmp=False)
+            #lal_ts,_,_ = gen_bbh(fs,T_obs,cnt,psds,snr=snr,dets=dets,beta=beta,par=lal_par)
+
+            # plot lalinf and gan waveforms
+            plt.plot(gan_pe_waveforms[np.argsort(post_q,axis=0)][200][0],color='c',alpha=0.5)
+            plt.plot(gan_ts[0][int(((T_obs/2)*fs)-fs/2):int(((T_obs/2)*fs)+fs/2)] * 817.98,color='g',alpha=0.5)
+            plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/test.png')
+            plt.close()
+            exit()
 
 	# loop over noise realisations
         if Nnoise>0:
@@ -550,8 +603,8 @@ def sim_data(fs,T_obs,psds,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro'
         if len(ts) == batch_size - 1:
             size = batch_size - 1 
             break
-
-        par_total.append(par_new.iota)
+        #tdelay = ((1126259462.0 - gw150914_posteriors['time'][cnt]))
+        #par_total.append(par.mc)
 
 
     # trim the data down to desired length
@@ -579,11 +632,11 @@ def sim_data(fs,T_obs,psds,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro'
 
         # par = bbhparams(mc,M,eta,m12[0],m12[1],ra,dec,iota,phi,psi,idx,fmin,None,None)
         
-        plt.hist(par_total, bins=100)
-        plt.title('iota')
-        plt.axvline(x=par_new.iota, color='k', linestyle='--')
-        plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/gan_pe_hist.png')
-        plt.close()
+        #plt.hist(par_total, bins=100)
+        #plt.title('iota')
+        #plt.axvline(x=par_new.iota, color='k', linestyle='--')
+        #plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/gan_pe_hist.png')
+        #plt.close()
         
 
     return [ts, yval], temp
@@ -595,6 +648,7 @@ def main():
     """
     snr_mn = 0.0
     snr_cnt = 0
+    lalinf_out_loc = '/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_MassNotFixed/lalinferencenest/engine'
 
     # get the command line args
     args = parser()
@@ -603,8 +657,8 @@ def main():
     safeTobs = safe*args.Tobs
 
     # load gw150914 time series and unwhitened psd
-    unwht_wvf_file = np.loadtxt('data/lalinference_nest_gw150914-like-template/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-freqData.dat')[:,1:]
-    sig_unwht_wvf_file = np.loadtxt('data/lalinference_nest_gw150914-like-template/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-freqDataWithInjection.dat')[:,1:]   
+    unwht_wvf_file = np.loadtxt('%s/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-freqData.dat' % lalinf_out_loc)[:,1:]
+    sig_unwht_wvf_file = np.loadtxt('%s/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-freqDataWithInjection.dat' % lalinf_out_loc)[:,1:]   
     unwht_wvf_file = np.add(unwht_wvf_file[:,0],1j*unwht_wvf_file[:,1])
     sig_unwht_wvf_file = np.add(sig_unwht_wvf_file[:,0],1j*sig_unwht_wvf_file[:,1]) 
 
@@ -614,7 +668,7 @@ def main():
 
     # get gw150914 template
     h_t = sig_unwht_wvf_file - unwht_wvf_file
-    wvf_psd_file = np.loadtxt('data/lalinference_nest_gw150914-like-template/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-PSD.dat')
+    wvf_psd_file = np.loadtxt('%s/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-PSD.dat' % lalinf_out_loc)
 
     unwht_wvf_file = sig_unwht_wvf_file
 
@@ -640,7 +694,6 @@ def main():
     	ts, par = sim_data(args.fsample,safeTobs,psd,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.5,0.5])
     	print '{}: completed generating data {}/{}'.format(time.asctime(),i+1,nblock)
 
-
         # plot waveforms
         
         # plot actual waveforms
@@ -660,7 +713,7 @@ def main():
             perc_25.append(np.percentile(perc_ts, 25))
             perc_5.append(np.percentile(perc_ts, 5))
 
-        plt.plot(ts[0][-1,0,:], alpha=0.5, color='green', linewidth=0.5)
+        #plt.plot(ts[0][-1,0,:], alpha=0.5, color='green', linewidth=0.5)
         plt.plot(h_t * 817.98, alpha=0.5, color='cyan', linewidth=0.5) #1079.22
         plt.fill_between(np.linspace(0,len(perc_90),num=len(perc_90)),perc_90, perc_5, lw=0,facecolor='#d5d8dc')
         plt.fill_between(np.linspace(0,len(perc_75),num=len(perc_75)),perc_75, perc_25, lw=0,facecolor='#808b96')

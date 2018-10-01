@@ -1,3 +1,4 @@
+from __future__ import division
 from keras.models import Sequential, Model
 from keras.layers import Dense, Input, GlobalAveragePooling1D
 from keras.layers import Reshape, AlphaDropout, Dropout, GaussianDropout, GaussianNoise
@@ -26,7 +27,7 @@ import random
 import string
 from sys import exit
 import pandas as pd
-import pickle
+import pickle, cPickle
 import scipy
 from scipy.stats import uniform, gaussian_kde, ks_2samp, anderson_ksamp
 from scipy.signal import resample
@@ -37,7 +38,7 @@ from sympy import Eq, Symbol, solve
 #import statsmodels.api as sm
 from scipy import stats
 
-cuda_dev = "4"
+cuda_dev = "0"
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
 os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
@@ -46,10 +47,10 @@ os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
 n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 1024	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0          # the noise standard deviation (if None then use noise images)
-batch_size = 64        # the batch size (twice this when testing discriminator)
+batch_size = 16        # the batch size (twice this when testing discriminator)
 pe_batch_size = 64
 max_iter = 100*1000 	# the maximum number of steps or epochs
-pe_iter = 2*100000         # the maximum number of steps or epochs for pe network 
+pe_iter = 1*100000         # the maximum number of steps or epochs for pe network 
 cadence = 100		# the cadence of output images
 save_models = True	# save the generator and discriminator models
 do_pe = True		# perform parameter estimation? 
@@ -57,8 +58,8 @@ pe_cadence = 1000  	# the cadence of PE outputs
 pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 5           # number of samples to view when plotting
-chi_loss = False        # set whether or not to use custom loss function
-lr = 2e-4               # learning rate for all networks
+chi_loss = True        # set whether or not to use custom loss function
+lr = 2e-4              # learning rate for all networks
 GW150914 = True        # run on lalinference produced GW150914 waveform 
 gw150914_tmp = True    # run on gw150914-like template
 do_old_model = False     # run previously saved model for all models
@@ -68,7 +69,7 @@ retrain_pe_mod = False
 contour_cadence = 100   # the cadence of PE contour plot outputs
 
 # the locations of signal files and output directory
-signal_path = '/home/hunter.gabbard/Burst/GenNet/BBH_version/data/event_gw150914_psd.pkl'
+signal_path = '/home/hunter.gabbard/CBC/GenNet/BBH_version/data/event_gw150914_psd.pkl'
 #pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
 if gw150914_tmp:
     out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template' 
@@ -112,7 +113,7 @@ class MyLayer(Layer):
     def __init__(self, const, **kwargs):
         self.const = K.constant(const)		# the input measured image i.e., h(t)
         print(self.const)
-        self.output_dim = 4			# the output dimension
+        self.output_dim = 2			# the output dimension
         super(MyLayer, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -123,23 +124,23 @@ class MyLayer(Layer):
         # and returns it as a Keras object
         # add in K cube of diff as third option
         diff = self.const - x
-        return K.stack([K.mean(diff), K.mean(K.square(diff)), K.mean(K.pow(diff,3)),K.mean(K.pow(diff,4))])
+        return K.stack([K.mean(diff), K.mean(K.square(diff))])#, K.mean(K.pow(diff,3)),K.mean(K.pow(diff,4))])
 
     def compute_output_shape(self, input_shape):
         # the output shape which seems to be (None,2) since the 2 is the number of 
         # outputs and the None needs to be there?
-        return (input_shape[0],4)
+        return (input_shape[0],2)
 
 def generator_model():
     """
     The generator that should train itself to generate noise free signals
     """
     model = Sequential()
-    act = 'linear'
+    act = 'relu'
     momentum = 0.9
-    drate = 0.2
+    drate = 0.5
     padding = 'same'
-    weights = 'he_uniform'
+    weights = 'glorot_uniform'
 
     
     # the first dense layer converts the input (100 random numbers) into
@@ -166,58 +167,58 @@ def generator_model():
     model.add(Dense(256 * 1 * int(n_pix/2), kernel_initializer=weights, input_shape=(100,)))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(PReLU())
-    model.add(BatchNormalization(momentum=momentum))
-    #model.add(GaussianDropout(drate))
+    #model.add(PReLU())
+    #model.add(BatchNormalization(momentum=momentum))
+    model.add(Dropout(drate))
 
     # then we reshape into a cube, upsample by a factor of 2 in each of
     # 2 dimensions and apply a 2D convolution with filter size 5x5
     # and 64 neurons and again the activation is tanh 
     model.add(Reshape((int(n_pix/2), 256)))
     model.add(UpSampling1D(size=2))
-    model.add(Conv1D(64, 5, kernel_initializer=weights, strides=1, padding=padding))
+    model.add(Conv1D(64, 8, kernel_initializer=weights, strides=1, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
-    model.add(PReLU())
+    #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(BatchNormalization(momentum=momentum))
+    #model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
     
     #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(128, 5, kernel_initializer=weights, strides=1, padding=padding))
-    #model.add(MaxPooling1D(pool_size=2))
-    model.add(Activation(act))
-    model.add(PReLU())
-    #model.add(LeakyReLU(alpha=0.2))
-    model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
-
-    #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(256, 5, kernel_initializer=weights, strides=1, padding=padding))
+    model.add(Conv1D(128, 32, kernel_initializer=weights, strides=1, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(BatchNormalization(momentum=momentum))
+    #model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
 
     #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(512, 5, kernel_initializer=weights, strides=1, padding=padding))
-    #model.add(MaxPooling1D(pool_size=2))
-    model.add(Activation(act))
-    model.add(PReLU())
-    #model.add(LeakyReLU(alpha=0.2))
-    model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
-
-    #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=1, padding=padding))
+    model.add(Conv1D(1024, 16, kernel_initializer=weights, strides=1, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(BatchNormalization(momentum=momentum))
+    #model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
+
+    #model.add(UpSampling1D(size=2))
+    model.add(Conv1D(1024, 16, kernel_initializer=weights, strides=1, padding=padding))
+    #model.add(MaxPooling1D(pool_size=2))
+    model.add(Activation(act))
+    #model.add(PReLU())
+    #model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
+    model.add(Dropout(drate))
+
+    #model.add(UpSampling1D(size=2))
+    #model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=1, padding=padding))
+    #model.add(MaxPooling1D(pool_size=2))
+    #model.add(Activation(act))
+    #model.add(PReLU())
+    #model.add(LeakyReLU(alpha=0.2))
+    #model.add(BatchNormalization(momentum=momentum))
+    #model.add(Dropout(drate))
     
     # if we have a 64x64 pixel dataset then we upsample once more 
     #if n_pix==64:
@@ -370,10 +371,11 @@ def signal_discriminator_model():
     """
 
     
-    act='linear'
-    momentum=0.9
-    weights = 'he_uniform'
-    drate = 0.2
+    #act='tanh'
+    momentum=0.8
+    weights = 'glorot_uniform'
+    drate = 0.5
+    act = 'tanh'
 
     model = Sequential()
 
@@ -383,7 +385,7 @@ def signal_discriminator_model():
     model.add(Conv1D(64, 5, kernel_initializer=weights, input_shape=(n_pix,1), strides=2, padding='same'))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(PReLU())
+    #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.3))
     #model.add(MaxPooling1D(pool_size=2))
@@ -391,36 +393,36 @@ def signal_discriminator_model():
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv1D(128, 5, kernel_initializer=weights, strides=2))
+    model.add(Conv1D(512, 5, kernel_initializer=weights, strides=1))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(PReLU())
+    #model.add(PReLU())
     model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
+    #model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
-    model.add(Conv1D(256, 5, strides=2))
+    model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=2))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(PReLU())
+    #model.add(PReLU())
     model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
+    #model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
-    model.add(Conv1D(512, 5, strides=2))
-    model.add(Activation(act))
+    #model.add(Conv1D(512, 5, strides=2))
+    #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(PReLU())
-    model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
+    #model.add(PReLU())
+    #model.add(BatchNormalization(momentum=momentum))
+    #model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
-    model.add(Conv1D(1024, 5, strides=2))
+    model.add(Conv1D(1024, 5, strides=1))
     model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    model.add(PReLU())
-    model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
+    #model.add(PReLU())
+    #model.add(BatchNormalization(momentum=momentum))
+    #model.add(Dropout(drate))
     # model.add(MaxPooling1D(pool_size=2))
     
     model.add(Flatten())
@@ -458,7 +460,7 @@ def generator_containing_signal_discriminator(generator, signal_discriminator):
     model.add(signal_discriminator)	# the discriminator has been set to not be trainable
     return model
 
-def plot_losses(losses,filename,logscale=False,legend=None):
+def plot_losses(losses,filename,logscale=False,legend=None,chi_loss=chi_loss):
     """
     Make loss and accuracy plots and output to file.
     Plot with x and y log-axes is desired
@@ -468,6 +470,8 @@ def plot_losses(losses,filename,logscale=False,legend=None):
     fig = plt.figure()
     losses = np.array(losses)
     ax1 = fig.add_subplot(211)	
+    #if chi_loss:
+    #    losses = np.reshape(losses, (losses.shape[0],1)) 
     ax1.plot(losses[:,0],'b')
     if losses.shape[1]>2:
         ax1.plot(losses[:,2],'r')
@@ -563,7 +567,8 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
     # plot pe samples
     if pe_samples is not None:
         #ax1.plot(pe_samples[:,0],pe_samples[:,1],'.r',markersize=0.8)
-        ax1.plot(pe_samples[0],pe_samples[1],'.r',markersize=0.8)  
+        ax1.plot(pe_samples[0],pe_samples[1],'.r',markersize=0.8)
+        #ax1.plot(signal_train_pars[:,0],signal_train_pars[:,1],'+g',markersize=0.8)  
 
         if do_contours and (index>0): # and ((index % contour_cadence == 0) 
             # plot contours for generated samples
@@ -572,7 +577,7 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
             contour_y = np.reshape(pe_samples[1], (pe_samples[1].shape[0]))
             contour_x = np.reshape(pe_samples[0], (pe_samples[0].shape[0]))
             contour_dataset = np.array([contour_x,contour_y])
-            kernel_cnn = make_contour_plot(ax1,contour_x,contour_y,contour_dataset,'Reds',flip=False)
+            kernel_cnn = make_contour_plot(ax1,contour_x,contour_y,contour_dataset,'red',flip=False)
 
     # plot contours of lalinf distribution
     if lalinf_dist is not None:
@@ -581,7 +586,7 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
 
         if do_contours and (index>0): # and ((index % contour_cadence == 0)
             # plot lalinference parameter contours
-            kernel_lalinf = make_contour_plot(ax1,lalinf_dist[0][:],lalinf_dist[1][:],lalinf_dist,'Blues',flip=False)
+            kernel_lalinf = make_contour_plot(ax1,lalinf_dist[0][:],lalinf_dist[1][:],lalinf_dist,'blue',flip=False)
 
     # plot pe_std error bars
     if pe_std:
@@ -592,18 +597,29 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
     ax1.plot([np.min(x),np.max(x)],[truth[1],truth[1]],'-k', alpha=0.5)
 
 
+    ks_score, ad_score, beta_score = overlap_tests(pe_samples,lalinf_dist,truth,kernel_cnn,kernel_lalinf)
+    #print('mc KS result: {0}'.format(ks_score[0]))
+    #print('q KS result: {0}'.format(ks_score[1]))
+    #print('mc AD result: {0}'.format(ad_score[0]))
+    #print('q AD result: {0}'.format(ad_score[1]))
+    print('beta result: {0}'.format(beta_score))
+
     ax1.set_xlabel(r'mc')
     ax1.set_ylabel(r'mass ratio')
+    ax1.legend(['Overlap: %s' % str(beta_score)])
     #ax1.set_xlim([np.min(all_pars[:,0]),np.max(all_pars[:,0])])
     #ax1.set_ylim([np.min(all_pars[:,1]),np.max(all_pars[:,1])])
     plt.savefig('%s/pe_samples%05d.png' % (outfile,index))
-    plt.savefig('%s/latest/pe_samples_gan.png' % (outfile), dpi=400)
+    
+    if do_pe and not do_only_old_pe_model or retrain_pe_mod:
+        plt.savefig('%s/latest/pe_samples_cnn.png' % (outfile), dpi=400)
+    else: plt.savefig('%s/latest/pe_samples_gan.png' % (outfile), dpi=400)
     plt.close('all')
 
-    return kernel_cnn, kernel_lalinf
+    #return kernel_cnn, kernel_lalinf
 
 
-def make_contour_plot(ax,x,y,dataset,color='Reds_d',flip=False):
+def make_contour_plot(ax,x,y,dataset,color='red',flip=False):
 
     # Make a 2d normed histogram
     H,xedges,yedges=np.histogram2d(x,y,bins=20,normed=True)
@@ -645,7 +661,7 @@ def make_contour_plot(ax,x,y,dataset,color='Reds_d',flip=False):
     positions = np.vstack([X.ravel(), Y.ravel()])
     kernel = gaussian_kde(dataset)
     Z = np.reshape(kernel(positions).T, X.shape)
-    ax.contour(X,Y,Z,levels=levels,alpha=0.5)
+    ax.contour(X,Y,Z,levels=levels,alpha=0.5,colors=color)
     #ax.set_aspect('equal')
 
     return kernel
@@ -797,7 +813,8 @@ def main():
     # setup output directory - make sure it exists
     os.system('mkdir -p %s' % out_path) 
 
-    template_dir = 'templates/'   
+    template_dir = 'templates/'
+    training_num = 100000   
 
     # load in lalinference m1 and m2 parameters
     pickle_lalinf_pars = open("data/gw150914_mc_q_lalinf_post.sav")
@@ -813,12 +830,41 @@ def main():
     #fmin_bank = pickle.load(pickle_fmin)
 
     # load time series template pickle file
-    pickle_ts = open("%s_ts_0_5000Samp.sav" % template_dir,"rb")
+    file_idx_list = []
+    pickle_ts = open("%s_ts_0_%sSamp.sav" % (template_dir,training_num),"rb")
     ts = pickle.load(pickle_ts)
-
-    # load corresponding parameters template pickle file
-    pickle_par = open("%s_params_0_5000Samp.sav" % template_dir,"rb")
+    pickle_par = open("%s_params_0_%sSamp.sav" % (template_dir,training_num),"rb")
     par = pickle.load(pickle_par)
+    if len(file_idx_list) > 0:
+        ts = np.array(ts[0][:-1])
+        par = np.array(par[:-1])
+    else:
+        ts = np.array(ts[0])
+        par = np.array(par)
+    par = np.reshape(par,(par.shape[0],1))
+    print("loading file: _ts_0_%sSamp.sav" % (training_num))
+    print("loading file: _params_0_%sSamp.sav" % (training_num))
+    for idx in file_idx_list:
+        pickle_ts = open("%s_ts_%s_%sSamp.sav" % (template_dir,str(idx),training_num),"rb")
+        ts_new = pickle.load(pickle_ts)
+        ts = np.vstack((ts,ts_new[0]))
+
+        # load corresponding parameters template pickle file
+        pickle_par = open("%s_params_%s_%sSamp.sav" % (template_dir,str(idx),training_num),"rb")
+        par_new = np.array(pickle.load(pickle_par))
+        par_new = np.reshape(par_new,(par_new.shape[0],1))
+        par = np.vstack((par,par_new))
+
+        print("loading file: _ts_%s_%sSamp.sav" % (str(idx),training_num))
+        print("loading file: _params_%s_%sSamp.sav" % (str(idx),training_num))
+
+        if idx < file_idx_list[-1]:
+            ts = ts[:-1]
+            par = par[:-1]
+
+    par = par.reshape(par.shape[0])
+    par = list(par)
+    ts = [ts]
 
     signal_train_images = np.reshape(ts[0], (ts[0].shape[0],ts[0].shape[2]))
 
@@ -829,7 +875,7 @@ def main():
 
     signal_train_pars = []
     for k in par:
-        signal_train_pars.append([k.mc,1.0/(k.m1/k.m2)])
+        signal_train_pars.append([k.mc,(k.m2/k.m1)])
 
     signal_train_pars = np.array(signal_train_pars)
     """
@@ -986,7 +1032,7 @@ def main():
         signal_pe = keras.models.load_model('best_models/signal_pe.h5')
         #signal_pe.load_weights('signal_pe.h5')
 
-    if do_pe and not do_only_old_pe_model and not retrain_pe_mod: #and not do_only_old_pe_model and not do_old_model:
+    if do_pe and not do_only_old_pe_model or retrain_pe_mod: #and not do_only_old_pe_model and not do_old_model:
 
         """
         # redefine training and input data
@@ -1096,7 +1142,7 @@ def main():
  
             
             # if new best network, plot output of PE 
-            if np.mean([pe_loss[0],pe_loss[1]]) <= np.min(np.array(pe_avg_losses)[:]) and i>10000:
+            if np.mean([pe_loss[0],pe_loss[1]]) <= np.min(np.array(pe_avg_losses)[:]) and i>1000:
                 # plot loss curves - non-log and log
                 plot_losses(pe_losses,'%s/pe_losses.png' % out_path,legend=['PE-GEN'])
                 plot_losses(pe_losses,'%s/pe_losses_logscale.png' % out_path,logscale=True,legend=['PE-GEN'])
@@ -1121,15 +1167,8 @@ def main():
                 more_generated_images = np.reshape(more_generated_images, (more_generated_images.shape[0],more_generated_images.shape[1],1))
                 pe_samples = signal_pe.predict(more_generated_images)
                 #pe_samples[:,1] /= 50.0
-                kernel_cnn, kernel_lalinf = plot_pe_samples(pe_samples,signal_pars,L,out_path,i,x,y,lalinf_pars,pe_std)
+                plot_pe_samples(pe_samples,signal_pars,L,out_path,i,x,y,lalinf_pars,pe_std)
 
-                ks_score, ad_score, beta_score = overlap_tests(pe_samples,lalinf_pars,signal_pars,kernel_cnn,kernel_lalinf)
-                #print('mc KS result: {0}'.format(ks_score[0]))
-                #print('q KS result: {0}'.format(ks_score[1]))
-                #print('mc AD result: {0}'.format(ad_score[0]))
-                #print('q AD result: {0}'.format(ad_score[1]))
-                print('beta result: {0}'.format(beta_score))
-             
     # load old pe model by default
     #signal_pe = keras.models.load_model('signal_pe.h5')
     #signal_pe.load_weights('signal_pe.h5')
@@ -1165,10 +1204,10 @@ def main():
  	# next train the generator to make signals that have residuals (after
         # subtracting from the measured data) that have the correct Gaussian properties
 	noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
-        ny = np.zeros((batch_size,4))	# initialise the expected residual means as zero 
+        ny = np.zeros((batch_size,2))	# initialise the expected residual means as zero 
         ny[:,1] = n_sig**2		# initialise the expected variances as n_sig squared
-        ny[:,2] = 0                     # initialise the expected 3rd moment of n_sig as zero
-        ny[:,3] = 3                     # initialise the expected 4th moment of n_sig as 3.
+        #ny[:,2] = 0                     # initialise the expected 3rd moment of n_sig as zero
+        #ny[:,3] = 3                     # initialise the expected 4th moment of n_sig as 3.
         if not chi_loss:
             ng_loss = data_subtraction_on_generator.train_on_batch(noise, ny)
         #else:
@@ -1181,8 +1220,8 @@ def main():
         # fill in the loss vector for plotting
         if not chi_loss:
             losses.append([sg_loss[0],sg_loss[1],sd_loss[0],sd_loss[1],ng_loss[0],ng_loss[1]])
-        #elif chi_loss:
-        #    losses.append([sg_loss[0],sg_loss[1],sd_loss[0],sd_loss[1]])
+        elif chi_loss:
+            losses.append([sg_loss[0],sg_loss[1],sd_loss[0],sd_loss[1]])
 
 	# output status and save images
 	if ((i % cadence == 0) & (i>0)) or (i == max_iter):
@@ -1249,16 +1288,17 @@ def main():
                 var_par2 = np.var(pe_samples[1])
                 #try:
                 if var_par1 != 0 and var_par2 != 0:
-                    kernel_cnn, kernel_lalinf = plot_pe_samples(pe_samples,signal_pars,L,out_path,i,x,y,lalinf_pars,pe_std)
-                    ks_score, ad_score, beta_score = overlap_tests(pe_samples,lalinf_pars,signal_pars,kernel_cnn,kernel_lalinf)
-                    #print('mc KS result: {0}'.format(ks_score[0]))
-                    #print('q KS result: {0}'.format(ks_score[1]))
-                    #print('mc AD result: {0}'.format(ad_score[0]))
-                    #print('q AD result: {0}'.format(ad_score[1]))
-                    print('beta result: {0}'.format(beta_score))
+                    plot_pe_samples(pe_samples,signal_pars,L,out_path,i,x,y,lalinf_pars,pe_std)
                 #except:
                 #    print('Skipping algebra error')
-                print('Completed PE plotting routine!')
+                f = open('gan_pe_samples.sav', 'wb')
+                cPickle.dump(pe_samples, f, protocol=cPickle.HIGHEST_PROTOCOL)
+                f.close()
+                f = open('gan_pe_waveforms.sav', 'wb')
+                cPickle.dump(more_generated_images, f, protocol=cPickle.HIGHEST_PROTOCOL)
+                f.close()
+                print('{}: saved GAN PE samples data to file'.format(time.asctime()))
+                print('{}: Completed PE plotting routine!'.format(time.asctime()))
             
 
 	    # save trained models
