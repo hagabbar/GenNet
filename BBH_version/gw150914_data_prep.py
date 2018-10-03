@@ -23,7 +23,7 @@ import pandas as pd
 safe = 2    # define the safe multiplication scale for the desired time length
 verb = False
 gw_tmp = True # add your own gw150914-like template at the end of array
-sample_num = 500000
+sample_num = 100000
 
 class bbhparams:
     def __init__(self,mc,M,eta,m1,m2,ra,dec,iota,phi,psi,idx,fmin,snr,SNR):
@@ -66,7 +66,7 @@ def parser():
     # arguments for reading in a data file
     parser.add_argument('-N', '--Nsamp', type=int, default=sample_num, help='the number of samples')
     parser.add_argument('-Nn', '--Nnoise', type=int, default=0, help='the number of noise realisations per signal, if 0 then signal only')
-    parser.add_argument('-Nb', '--Nblock', type=int, default=100000, help='the number of training samples per output file')
+    parser.add_argument('-Nb', '--Nblock', type=int, default=sample_num, help='the number of training samples per output file')
     parser.add_argument('-f', '--fsample', type=int, default=1024, help='the sampling frequency (Hz)')
     parser.add_argument('-T', '--Tobs', type=int, default=2, help='the observation duration (sec)')
     parser.add_argument('-s', '--snr', type=float, default=56, help='the signal integrated SNR')   
@@ -324,6 +324,7 @@ def gen_par(fs,T_obs,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
         eta = m1*m2/(m1+m2)**2
         M = m1 + m2
         mc = M*eta**(3.0/5.0)
+        mc = 30.0
         fmin = get_fmin(M,eta,int(idx-sidx)/fs)
         ra=2.21535724066
         dec=-1.23649695537
@@ -499,7 +500,7 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det):
     hp_tck = interpolate.splrep(tvec, hp, s=0)
     hc_tck = interpolate.splrep(tvec, hc, s=0)
     if gw_tmp: tnew = tvec - tdelay
-    else: tnew = tvec - tdelay + (np.random.uniform(low=-0.037370920181274414,high=0.0055866241455078125))
+    else: tnew = tvec - tdelay# + (np.random.uniform(low=-0.037370920181274414,high=0.0055866241455078125))
     new_ht = interpolate.splev(tnew, ht_tck, der=0,ext=1)
     new_hp = interpolate.splev(tnew, hp_tck, der=0,ext=1)
     new_hc = interpolate.splev(tnew, hc_tck, der=0,ext=1)
@@ -588,7 +589,7 @@ def main():
     """
     snr_mn = 0.0
     snr_cnt = 0
-    lalinf_out_loc = '/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_MassNotFixed/lalinferencenest/engine'
+    lalinf_out_loc = '/home/hunter.gabbard/Burst/GenNet/BBH_version/data/lalinf_nest_gw150914-like_allbutmassfixed'
 
     # get the command line args
     args = parser()

@@ -58,7 +58,7 @@ pe_cadence = 1000  	# the cadence of PE outputs
 pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 5           # number of samples to view when plotting
-chi_loss = True        # set whether or not to use custom loss function
+chi_loss = False        # set whether or not to use custom loss function
 lr = 2e-4              # learning rate for all networks
 GW150914 = True        # run on lalinference produced GW150914 waveform 
 gw150914_tmp = True    # run on gw150914-like template
@@ -138,7 +138,7 @@ def generator_model():
     model = Sequential()
     act = 'relu'
     momentum = 0.9
-    drate = 0.5
+    drate = 0.55
     padding = 'same'
     weights = 'glorot_uniform'
 
@@ -176,7 +176,7 @@ def generator_model():
     # and 64 neurons and again the activation is tanh 
     model.add(Reshape((int(n_pix/2), 256)))
     model.add(UpSampling1D(size=2))
-    model.add(Conv1D(64, 8, kernel_initializer=weights, strides=1, padding=padding))
+    model.add(Conv1D(32, 8, kernel_initializer=weights, strides=1, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
@@ -374,8 +374,9 @@ def signal_discriminator_model():
     #act='tanh'
     momentum=0.8
     weights = 'glorot_uniform'
-    drate = 0.5
-    act = 'tanh'
+    drate = 0.3
+    act = 'linear'
+    alpha = 0.1
 
     model = Sequential()
 
@@ -384,7 +385,7 @@ def signal_discriminator_model():
     # the activation is tanh and we apply a 2x2 max pooling
     model.add(Conv1D(64, 5, kernel_initializer=weights, input_shape=(n_pix,1), strides=2, padding='same'))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(0.3))
@@ -393,9 +394,9 @@ def signal_discriminator_model():
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv1D(512, 5, kernel_initializer=weights, strides=1))
+    model.add(Conv1D(512, 5, kernel_initializer=weights, strides=2))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
     model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(drate))
@@ -403,22 +404,22 @@ def signal_discriminator_model():
 
     model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=2))
     model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
     model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
-    #model.add(Conv1D(512, 5, strides=2))
-    #model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=2))
+    model.add(Activation(act))
+    model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
-    model.add(Conv1D(1024, 5, strides=1))
-    model.add(Activation(act))
+    #model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=2))
+    #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
