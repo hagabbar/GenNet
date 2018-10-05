@@ -47,7 +47,7 @@ os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
 n_colors = 2		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 1024	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0          # the noise standard deviation (if None then use noise images)
-batch_size = 64        # the batch size (twice this when testing discriminator)
+batch_size = 8        # the batch size (twice this when testing discriminator)
 pe_batch_size = 64
 max_iter = 100*1000 	# the maximum number of steps or epochs
 pe_iter = 1*100000         # the maximum number of steps or epochs for pe network 
@@ -59,7 +59,7 @@ pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 5           # number of samples to view when plotting
 chi_loss = False        # set whether or not to use custom loss function
-lr = 2e-4              # learning rate for all networks
+lr = 9e-5              # learning rate for all networks
 GW150914 = True        # run on lalinference produced GW150914 waveform 
 gw150914_tmp = True    # run on gw150914-like template
 do_old_model = False     # run previously saved model for all models
@@ -148,7 +148,7 @@ def generator_model():
     model = Sequential()
     act = 'relu'
     momentum = 0.8
-    drate = 0.2
+    drate = 0.5
     padding = 'same'
     weights = 'glorot_uniform'
 
@@ -186,7 +186,7 @@ def generator_model():
     # and 64 neurons and again the activation is tanh 
     model.add(Reshape((int(n_pix/2), 256)))
     model.add(UpSampling1D(size=2))
-    model.add(Conv1D(128, 5, kernel_initializer=weights, strides=2, padding=padding))
+    model.add(Conv1D(64, 5, kernel_initializer=weights, strides=2, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
@@ -375,7 +375,7 @@ def signal_discriminator_model():
     #act='tanh'
     momentum=0.8
     weights = 'glorot_uniform'
-    drate = 0.2
+    drate = 0.5
     act = 'linear'
     alpha = 0.2
     padding = 'same'
@@ -384,7 +384,7 @@ def signal_discriminator_model():
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
-    model.add(Conv2D(64, (5,1), kernel_initializer=weights, input_shape=(n_pix,2,1), strides=(2,1), padding=padding))
+    model.add(Conv2D(64, (5,5), kernel_initializer=weights, input_shape=(n_pix,2,1), strides=(2,2), padding=padding))
     model.add(Activation(act))
     model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
@@ -395,7 +395,7 @@ def signal_discriminator_model():
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv2D(128, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
+    model.add(Conv2D(128, (5,5), kernel_initializer=weights, strides=(2,2), padding=padding))
     model.add(Activation(act))
     model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
@@ -403,12 +403,12 @@ def signal_discriminator_model():
     model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
-    model.add(Conv2D(256, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
-    model.add(Activation(act))
-    model.add(LeakyReLU(alpha=alpha))
+    #model.add(Conv2D(256, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
+    #model.add(Activation(act))
+    #model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
+    #model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
     #model.add(Conv2D(512, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
