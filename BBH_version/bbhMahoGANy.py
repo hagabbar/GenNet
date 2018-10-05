@@ -38,16 +38,16 @@ from sympy import Eq, Symbol, solve
 #import statsmodels.api as sm
 from scipy import stats
 
-cuda_dev = "0"
+cuda_dev = "1"
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
 os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
 
 # define some global params
-n_colors = 1		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
+n_colors = 2		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 1024	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0          # the noise standard deviation (if None then use noise images)
-batch_size = 16        # the batch size (twice this when testing discriminator)
+batch_size = 64        # the batch size (twice this when testing discriminator)
 pe_batch_size = 64
 max_iter = 100*1000 	# the maximum number of steps or epochs
 pe_iter = 1*100000         # the maximum number of steps or epochs for pe network 
@@ -113,8 +113,8 @@ class MyLayer(Layer):
     def __init__(self, const, **kwargs):
         self.const = K.constant(const)		# the input measured image i.e., h(t)
         print(self.const)
-        self.output_dim = 2			# the output dimension
-        super(MyLayer, self).__init__(**kwargs)
+        self.output_dim = (n_pix,2,1)			# the output dimension
+        super(MyLayer,self).__init__(**kwargs)
 
     def build(self, input_shape):
 	super(MyLayer, self).build(input_shape)  # Be sure to call this at the end
@@ -124,12 +124,22 @@ class MyLayer(Layer):
         # and returns it as a Keras object
         # add in K cube of diff as third option
         diff = self.const - x
-        return K.stack([K.mean(diff), K.mean(K.square(diff))])#, K.mean(K.pow(diff,3)),K.mean(K.pow(diff,4))])
+        return K.stack([x,diff], axis=2)
 
     def compute_output_shape(self, input_shape):
         # the output shape which seems to be (None,2) since the 2 is the number of 
         # outputs and the None needs to be there?
-        return (input_shape[0],2)
+        return (input_shape[0],n_pix,2,1)
+
+def data_subtraction_model(noise_signal,npix):
+    """
+    This model simply applies the signal subtraction from the measured image
+    You must pass it the measured image
+    """
+    model = Sequential()
+    model.add(MyLayer(noise_signal,input_shape=(npix,1))) # used to be another element for n_colors
+   
+    return model
 
 def generator_model():
     """
@@ -137,8 +147,8 @@ def generator_model():
     """
     model = Sequential()
     act = 'relu'
-    momentum = 0.9
-    drate = 0.55
+    momentum = 0.8
+    drate = 0.2
     padding = 'same'
     weights = 'glorot_uniform'
 
@@ -176,7 +186,7 @@ def generator_model():
     # and 64 neurons and again the activation is tanh 
     model.add(Reshape((int(n_pix/2), 256)))
     model.add(UpSampling1D(size=2))
-    model.add(Conv1D(32, 8, kernel_initializer=weights, strides=1, padding=padding))
+    model.add(Conv1D(128, 5, kernel_initializer=weights, strides=2, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
@@ -184,8 +194,8 @@ def generator_model():
     #model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
     
-    #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(128, 32, kernel_initializer=weights, strides=1, padding=padding))
+    model.add(UpSampling1D(size=2))
+    model.add(Conv1D(128, 5, kernel_initializer=weights, strides=2, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
@@ -193,8 +203,8 @@ def generator_model():
     #model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
 
-    #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(1024, 16, kernel_initializer=weights, strides=1, padding=padding))
+    model.add(UpSampling1D(size=2))
+    model.add(Conv1D(256, 5, kernel_initializer=weights, strides=2, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
     model.add(Activation(act))
     #model.add(PReLU())
@@ -202,14 +212,14 @@ def generator_model():
     #model.add(BatchNormalization(momentum=momentum))
     model.add(Dropout(drate))
 
-    #model.add(UpSampling1D(size=2))
-    model.add(Conv1D(1024, 16, kernel_initializer=weights, strides=1, padding=padding))
+    model.add(UpSampling1D(size=2))
+    #model.add(Conv1D(512, 5, kernel_initializer=weights, strides=1, padding=padding))
     #model.add(MaxPooling1D(pool_size=2))
-    model.add(Activation(act))
+    #model.add(Activation(act))
     #model.add(PReLU())
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
+    #model.add(Dropout(drate))
 
     #model.add(UpSampling1D(size=2))
     #model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=1, padding=padding))
@@ -225,19 +235,10 @@ def generator_model():
     #    model.add(UpSampling2D(size=(1, 2)))
     # apply another 2D convolution with filter size 5x5 and a tanh activation
     # the output shape should be n_colors x n_pix x n_pix
-    model.add(Conv1D(n_colors, 5, padding=padding))
+    model.add(Conv1D(1, 5, padding=padding))
     model.add(Activation('linear')) # this should be tanh
-    
-    return model
+    model.summary()
 
-def data_subtraction_model(noise_signal,npix):
-    """
-    This model simply applies the signal subtraction from the measured image
-    You must pass it the measured image
-    """
-    model = Sequential()
-    model.add(MyLayer(noise_signal,input_shape=(npix,1))) # used to be another element for n_colors
-   
     return model
 
 def signal_pe_model():
@@ -374,53 +375,53 @@ def signal_discriminator_model():
     #act='tanh'
     momentum=0.8
     weights = 'glorot_uniform'
-    drate = 0.3
+    drate = 0.2
     act = 'linear'
-    alpha = 0.1
+    alpha = 0.2
+    padding = 'same'
 
     model = Sequential()
 
-    
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
-    model.add(Conv1D(64, 5, kernel_initializer=weights, input_shape=(n_pix,1), strides=2, padding='same'))
+    model.add(Conv2D(64, (5,1), kernel_initializer=weights, input_shape=(n_pix,2,1), strides=(2,1), padding=padding))
     model.add(Activation(act))
     model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(0.3))
+    model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
     
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv1D(512, 5, kernel_initializer=weights, strides=2))
+    model.add(Conv2D(128, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
     model.add(Activation(act))
     model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
-    model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(drate))
+    #model.add(BatchNormalization(momentum=momentum))
+    model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
-    model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=2))
+    model.add(Conv2D(256, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
     model.add(Activation(act))
     model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
-    model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(drate))
+    #model.add(BatchNormalization(momentum=momentum))
+    model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
-    model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=2))
-    model.add(Activation(act))
-    model.add(LeakyReLU(alpha=alpha))
+    #model.add(Conv2D(512, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
+    #model.add(Activation(act))
+    #model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(drate))
     #model.add(MaxPooling1D(pool_size=2))
 
-    #model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=2))
+    #model.add(Conv2D(1024, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
     #model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
+    #model.add(LeakyReLU(alpha=alpha))
     #model.add(PReLU())
     #model.add(BatchNormalization(momentum=momentum))
     #model.add(Dropout(drate))
@@ -437,7 +438,8 @@ def signal_discriminator_model():
     # the final dense layer has a sigmoid activation and a single output
     model.add(Dense(1))
     model.add(Activation('sigmoid'))
-    
+    model.summary()
+ 
     return model
 
 def generator_after_subtracting_noise(generator, data_subtraction):
@@ -739,12 +741,14 @@ def overlap_tests(pred_samp,lalinf_samp,true_vals,kernel_cnn,kernel_lalinf):
     ad_score = [ad_mc_score,ad_q_score]
 
     # compute overlap statistic
-    X, Y = np.mgrid[np.min(pred_samp[0]):np.max(pred_samp[0]):100j, np.min(pred_samp[1]):np.max(pred_samp[1]):100j]
+    comb_mc = np.concatenate((pred_samp[0],lalinf_samp[0][:].reshape(lalinf_samp[0][:].shape[0],1)))
+    comb_q = np.concatenate((pred_samp[1],lalinf_samp[1][:].reshape(lalinf_samp[1][:].shape[0],1)))
+    X, Y = np.mgrid[np.min(comb_mc):np.max(comb_mc):100j, np.min(comb_q):np.max(comb_q):100j]
     positions = np.vstack([X.ravel(), Y.ravel()])
     #cnn_pdf = np.reshape(kernel_cnn(positions).T, X.shape)
     cnn_pdf = kernel_cnn.pdf(positions)
 
-    X, Y = np.mgrid[np.min(lalinf_samp[0][:]):np.max(lalinf_samp[0][:]):100j, np.min(lalinf_samp[1][:]):np.max(lalinf_samp[1][:]):100j]
+    #X, Y = np.mgrid[np.min(lalinf_samp[0][:]):np.max(lalinf_samp[0][:]):100j, np.min(lalinf_samp[1][:]):np.max(lalinf_samp[1][:]):100j]
     positions = np.vstack([X.ravel(), Y.ravel()])
     #lalinf_pdf = np.reshape(kernel_lalinf(positions).T, X.shape)
     lalinf_pdf = kernel_lalinf.pdf(positions)
@@ -793,6 +797,7 @@ def plot_waveform_est(signal_image,noise_signal,generated_images,out_path,i,plot
     # the first image is the true noise realisation
     residuals = np.transpose(np.transpose(noise_signal)-gen_sig)
     ax3.plot((residuals), color='red', alpha=0.25, linewidth=0.5)
+    #ax3.plot((noise_signal - ax), color='black', alpha=0.5, linewidth=0.5)
 
     #ax3.set_title('Residuals')
     ax3.set(xlabel='Time')
@@ -815,7 +820,7 @@ def main():
     os.system('mkdir -p %s' % out_path) 
 
     template_dir = 'templates/'
-    training_num = 100000   
+    training_num = 100000  
 
     # load in lalinference m1 and m2 parameters
     pickle_lalinf_pars = open("data/gw150914_mc_q_lalinf_post.sav")
@@ -972,9 +977,9 @@ def main():
     # SETUP MODELS #################################
    
     # initialise all models
-    signal_discriminator = signal_discriminator_model()
-    data_subtraction = data_subtraction_model(noise_signal,n_pix)	# need to pass the measured data here
     generator = generator_model()
+    signal_discriminator = signal_discriminator_model()
+    data_subtraction = data_subtraction_model(noise_signal,n_pix)
     if do_pe:
         signal_pe = signal_pe_model()    
 
@@ -984,12 +989,12 @@ def main():
     We use a mean squared error here since we want it to find 
     the situation where the residuals have the known mean=0, std=n_sig properties
     """
-    if not chi_loss:
-        data_subtraction_on_generator = generator_after_subtracting_noise(generator, data_subtraction)
-        data_subtraction_on_generator.compile(loss='mean_squared_error', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
+    # setup extra layer on generator
+    data_subtraction_on_generator = generator_after_subtracting_noise(generator, data_subtraction)
+    data_subtraction_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
 
     # setup generator training when we pass the output to the signal discriminator
-    signal_discriminator_on_generator = generator_containing_signal_discriminator(generator, signal_discriminator)
+    signal_discriminator_on_generator = generator_containing_signal_discriminator(data_subtraction_on_generator, signal_discriminator)
     set_trainable(signal_discriminator, False)	# set the discriminator as not trainable for this step
     if not chi_loss:
         signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
@@ -1009,8 +1014,6 @@ def main():
 
     # print the model summaries
     print(generator.summary())
-    if not chi_loss:
-        print(data_subtraction_on_generator.summary())
     print(signal_discriminator_on_generator.summary())
     print(signal_discriminator.summary())
     if do_pe:
@@ -1025,7 +1028,6 @@ def main():
             #signal_pe.load_weights('signal_pe.h5')
         signal_discriminator.load_weights('discriminator.h5')
         signal_discriminator_on_generator.load_weights('signal_dis_on_gen.h5')
-        data_subtraction_on_generator.load_weights('data_subtract_on_gen.h5')
         generator.load_weights('generator.h5')
 
     if do_only_old_pe_model:
@@ -1194,42 +1196,36 @@ def main():
         noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
         generated_images = generator.predict(noise)
 
+        # making generated signal a 2d image
+        subtracted_signals = noise_signal - generated_images
+        subtracted_signals_2d = np.array([])
+        for _idx in range(subtracted_signals.shape[0]):
+            subtracted_signals_2d = np.append(np.concatenate((generated_images[_idx],subtracted_signals[_idx]), axis=1),subtracted_signals_2d)
+        subtracted_signals_2d = subtracted_signals_2d.reshape(subtracted_signals.shape[0],subtracted_signals.shape[1],2)
+        
+
 	# make set of real and fake signal mages with labels
         signal_batch_images = np.reshape(signal_batch_images, (signal_batch_images.shape[0], signal_batch_images.shape[1], 1))
-        sX = np.concatenate((signal_batch_images, generated_images))
+        signal_batch_images_noise = np.random.normal(loc=0,scale=1,size=[batch_size,signal_batch_images.shape[1],1])
+        signal_batch_images = np.concatenate((signal_batch_images,signal_batch_images_noise), axis=2)
+        sX = np.concatenate((signal_batch_images, subtracted_signals_2d))
+        sX = np.reshape(sX, (sX.shape[0],sX.shape[1],sX.shape[2],1))
         sy = [1.0] * batch_size + [0.0] * batch_size
 
         # train only the signal discriminator on the data
         sd_loss = signal_discriminator.train_on_batch(sX, sy)
-
- 	# next train the generator to make signals that have residuals (after
-        # subtracting from the measured data) that have the correct Gaussian properties
-	noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
-        ny = np.zeros((batch_size,2))	# initialise the expected residual means as zero 
-        ny[:,1] = n_sig**2		# initialise the expected variances as n_sig squared
-        #ny[:,2] = 0                     # initialise the expected 3rd moment of n_sig as zero
-        #ny[:,3] = 3                     # initialise the expected 4th moment of n_sig as 3.
-        if not chi_loss:
-            ng_loss = data_subtraction_on_generator.train_on_batch(noise, ny)
-        #else:
-        #    ng_loss = data_subtraction_on_generator.train_on_batch(noise, [noise_signal] * batch_size)
 
 	# finally train the generator to make images that look like signals
         noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
         sg_loss = signal_discriminator_on_generator.train_on_batch(noise, [1] * batch_size)
 
         # fill in the loss vector for plotting
-        if not chi_loss:
-            losses.append([sg_loss[0],sg_loss[1],sd_loss[0],sd_loss[1],ng_loss[0],ng_loss[1]])
-        elif chi_loss:
-            losses.append([sg_loss[0],sg_loss[1],sd_loss[0],sd_loss[1]])
+        losses.append([sg_loss[0],sg_loss[1],sd_loss[0],sd_loss[1]])
 
 	# output status and save images
 	if ((i % cadence == 0) & (i>0)) or (i == max_iter):
             log_mesg = "%d: [sD loss: %f, acc: %f]" % (i, sd_loss[0], sd_loss[1])
 	    log_mesg = "%s  [sG loss: %f, acc: %f]" % (log_mesg, sg_loss[0], sg_loss[1])
-            if not chi_loss:
-                log_mesg = "%s  [nG loss: %f, acc: %f]" % (log_mesg, ng_loss[0], ng_loss[1])
             print(log_mesg)
 
             # plot waveform estimates
@@ -1254,12 +1250,8 @@ def main():
             """
 
             # plot loss curves - noMlog and log
-            if not chi_loss:
-                plot_losses(losses,'%s/losses.png' % out_path,legend=['S-GEN','S-DIS','N-GEN'])
-                plot_losses(losses,'%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS','N-GEN'])
-            if chi_loss:
-                plot_losses(losses,'%s/losses.png' % out_path,legend=['S-GEN','S-DIS'])
-                plot_losses(losses,'%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS'])
+            plot_losses(losses,'%s/losses.png' % out_path,legend=['S-GEN','S-DIS'])
+            plot_losses(losses,'%s/losses_logscale.png' % out_path,logscale=True,legend=['S-GEN','S-DIS'])
 
             
 	    # plot posterior samples
@@ -1307,8 +1299,6 @@ def main():
             if save_models:
 	        generator.save_weights('generator.h5', True)
                 signal_discriminator.save_weights('discriminator.h5', True)
-                if not chi_loss:
-                    data_subtraction_on_generator.save_weights('data_subtract_on_gen.h5', True)
                 signal_discriminator_on_generator.save_weights('signal_dis_on_gen.h5', True)
             
 
