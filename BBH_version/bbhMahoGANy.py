@@ -47,7 +47,7 @@ os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
 n_colors = 2		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 1024	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0          # the noise standard deviation (if None then use noise images)
-batch_size = 8        # the batch size (twice this when testing discriminator)
+batch_size = 64        # the batch size (twice this when testing discriminator)
 pe_batch_size = 64
 max_iter = 100*1000 	# the maximum number of steps or epochs
 pe_iter = 1*100000         # the maximum number of steps or epochs for pe network 
@@ -59,7 +59,7 @@ pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
 N_VIEWED = 5           # number of samples to view when plotting
 chi_loss = False        # set whether or not to use custom loss function
-lr = 9e-5              # learning rate for all networks
+lr = 2e-4              # learning rate for all networks
 GW150914 = True        # run on lalinference produced GW150914 waveform 
 gw150914_tmp = True    # run on gw150914-like template
 do_old_model = False     # run previously saved model for all models
@@ -67,6 +67,7 @@ do_contours = True      # plot credibility contours on pe estimates
 do_only_old_pe_model = True # run previously saved pe model only
 retrain_pe_mod = False
 contour_cadence = 100   # the cadence of PE contour plot outputs
+n_noise_real = 1       # number of noise realizations per training sample
 
 # the locations of signal files and output directory
 signal_path = '/home/hunter.gabbard/CBC/GenNet/BBH_version/data/event_gw150914_psd.pkl'
@@ -147,27 +148,31 @@ def generator_model():
     """
     model = Sequential()
     act = 'relu'
-    momentum = 0.8
-    drate = 0.5
+    momentum = 0.99
+    drate = 0.2
     padding = 'same'
     weights = 'glorot_uniform'
-
+    alpha = 0.2
+    filtsize = 5
+    num_lays = 5
+    batchnorm = True
     
     # the first dense layer converts the input (100 random numbers) into
     # 1024 numbers and outputs with a tanh activation
     #model.add(Dense(128, input_shape=(100,)))
+    #if batchnorm: model.add(BatchNormalization(momentum=momentum))
     #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
     #model.add(GaussianDropout(0.3))
  
-    #model.add(Dense(512))
+    #model.add(Dense(1024))
+    #if batchnorm: model.add(BatchNormalization(momentum=momentum))
     #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
     #model.add(GaussianDropout(0.3))
 
     #model.add(Dense(256))
+    #if batchnorm: model.add(BatchNormalization(momentum=momentum))
     #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
     #model.add(GaussianDropout(0.3))
@@ -175,67 +180,74 @@ def generator_model():
     # the second dense layer expands this up to 32768 and again uses a
     # tanh activation function
     model.add(Dense(256 * 1 * int(n_pix/2), kernel_initializer=weights, input_shape=(100,)))
-    model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=0.2))
-    #model.add(PReLU())
-    #model.add(BatchNormalization(momentum=momentum))
+    if batchnorm: model.add(BatchNormalization(momentum=momentum))
+    if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+    elif act == 'prelu': model.add(PReLU())
+    else: model.add(Activation(act))
     model.add(Dropout(drate))
 
     # then we reshape into a cube, upsample by a factor of 2 in each of
     # 2 dimensions and apply a 2D convolution with filter size 5x5
     # and 64 neurons and again the activation is tanh 
     model.add(Reshape((int(n_pix/2), 256)))
-    model.add(UpSampling1D(size=2))
-    model.add(Conv1D(64, 5, kernel_initializer=weights, strides=2, padding=padding))
-    #model.add(MaxPooling1D(pool_size=2))
-    model.add(Activation(act))
-    #model.add(PReLU())
-    #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
+    if num_lays >= 1:
+        model.add(UpSampling1D(size=2))
+        model.add(Conv1D(64, filtsize, kernel_initializer=weights, strides=1, padding=padding))
+        #model.add(MaxPooling1D(pool_size=2))
+        if batchnorm: model.add(BatchNormalization(momentum=momentum))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
     
-    model.add(UpSampling1D(size=2))
-    model.add(Conv1D(128, 5, kernel_initializer=weights, strides=2, padding=padding))
-    #model.add(MaxPooling1D(pool_size=2))
-    model.add(Activation(act))
-    #model.add(PReLU())
-    #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
+    elif num_lays >= 2:
+        #model.add(UpSampling1D(size=2))
+        model.add(Conv1D(128, filtsize, kernel_initializer=weights, strides=1, padding=padding))
+        #model.add(MaxPooling1D(pool_size=2))
+        if batchnorm: model.add(BatchNormalization(momentum=momentum))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
 
-    model.add(UpSampling1D(size=2))
-    model.add(Conv1D(256, 5, kernel_initializer=weights, strides=2, padding=padding))
-    #model.add(MaxPooling1D(pool_size=2))
-    model.add(Activation(act))
-    #model.add(PReLU())
-    #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
+    elif num_lays >= 3:
+        #model.add(UpSampling1D(size=2))
+        model.add(Conv1D(256, filtsize, kernel_initializer=weights, strides=1, padding=padding))
+        #model.add(MaxPooling1D(pool_size=2))
+        if batchnorm: model.add(BatchNormalization(momentum=momentum))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
 
-    model.add(UpSampling1D(size=2))
-    #model.add(Conv1D(512, 5, kernel_initializer=weights, strides=1, padding=padding))
-    #model.add(MaxPooling1D(pool_size=2))
-    #model.add(Activation(act))
-    #model.add(PReLU())
-    #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(drate))
+    elif num_lays >= 4:
+        #model.add(UpSampling1D(size=2))
+        model.add(Conv1D(512, filtsize, kernel_initializer=weights, strides=1, padding=padding))
+        #model.add(MaxPooling1D(pool_size=2))
+        if batchnorm: model.add(BatchNormalization(momentum=momentum))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
 
+    elif num_lays >= 5:
+        #model.add(UpSampling1D(size=2))
+        model.add(Conv1D(1024, filtsize, kernel_initializer=weights, strides=1, padding=padding))
+        #model.add(MaxPooling1D(pool_size=2))
+        if batchnorm: model.add(BatchNormalization(momentum=momentum))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
+
+    
     #model.add(UpSampling1D(size=2))
-    #model.add(Conv1D(1024, 5, kernel_initializer=weights, strides=1, padding=padding))
-    #model.add(MaxPooling1D(pool_size=2))
-    #model.add(Activation(act))
-    #model.add(PReLU())
-    #model.add(LeakyReLU(alpha=0.2))
-    #model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(drate))
-    
     # if we have a 64x64 pixel dataset then we upsample once more 
     #if n_pix==64:
     #    model.add(UpSampling2D(size=(1, 2)))
     # apply another 2D convolution with filter size 5x5 and a tanh activation
     # the output shape should be n_colors x n_pix x n_pix
-    model.add(Conv1D(1, 5, padding=padding))
+    model.add(Conv1D(1, filtsize, padding=padding))
     model.add(Activation('linear')) # this should be tanh
     model.summary()
 
@@ -373,65 +385,71 @@ def signal_discriminator_model():
 
     
     #act='tanh'
-    momentum=0.8
+    momentum=0.99
     weights = 'glorot_uniform'
-    drate = 0.5
-    act = 'linear'
+    drate = 0.2
+    act = 'leakyrelu'
     alpha = 0.2
     padding = 'same'
+    num_lays = 5
+    batchnorm = True
+    filtsize = (5,1)
 
     model = Sequential()
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
-    model.add(Conv2D(64, (5,5), kernel_initializer=weights, input_shape=(n_pix,2,1), strides=(2,2), padding=padding))
-    model.add(Activation(act))
-    model.add(LeakyReLU(alpha=alpha))
-    #model.add(PReLU())
-    #model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
-    #model.add(MaxPooling1D(pool_size=2))
+    if num_lays >= 1:
+        model.add(Conv2D(64, filtsize, kernel_initializer=weights, input_shape=(n_pix,2,1), strides=(2,1), padding=padding))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
+        #model.add(MaxPooling1D(pool_size=2))
     
     # the next layer is another 2D convolution with 128 neurons and a 5x5 
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
-    model.add(Conv2D(128, (5,5), kernel_initializer=weights, strides=(2,2), padding=padding))
-    model.add(Activation(act))
-    model.add(LeakyReLU(alpha=alpha))
-    #model.add(PReLU())
-    #model.add(BatchNormalization(momentum=momentum))
-    model.add(Dropout(drate))
-    #model.add(MaxPooling1D(pool_size=2))
+    elif num_lays >= 2:
+        model.add(Conv2D(128, filtsize, kernel_initializer=weights, strides=(2,1), padding=padding))
+        if batchnorm: model.add(BatchNormalization(momentum=momentum))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
+        #model.add(MaxPooling1D(pool_size=2))
 
-    #model.add(Conv2D(256, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
-    #model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=alpha))
-    #model.add(PReLU())
-    #model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(drate))
-    #model.add(MaxPooling1D(pool_size=2))
+    elif num_lays >= 3:
+        model.add(Conv2D(256, filtsize, kernel_initializer=weights, strides=(2,1), padding=padding))
+        if batchnorm: model.add(BatchNormalization(momentum=momentum))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
+        #model.add(MaxPooling1D(pool_size=2))
 
-    #model.add(Conv2D(512, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
-    #model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=alpha))
-    #model.add(PReLU())
-    #model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(drate))
-    #model.add(MaxPooling1D(pool_size=2))
+    elif num_lays >= 4:
+        model.add(Conv2D(512, filtsize, kernel_initializer=weights, strides=(2,1), padding=padding))
+        if batchnorm: model.add(BatchNormalization(momentum=momentum))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
+        #model.add(MaxPooling1D(pool_size=2))
 
-    #model.add(Conv2D(1024, (5,1), kernel_initializer=weights, strides=(2,1), padding=padding))
-    #model.add(Activation(act))
-    #model.add(LeakyReLU(alpha=alpha))
-    #model.add(PReLU())
-    #model.add(BatchNormalization(momentum=momentum))
-    #model.add(Dropout(drate))
-    # model.add(MaxPooling1D(pool_size=2))
+    elif num_lays >= 5:
+        model.add(Conv2D(1024, filtsize, kernel_initializer=weights, strides=(2,1), padding=padding))
+        if batchnorm: model.add(BatchNormalization(momentum=momentum))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
+        # model.add(MaxPooling1D(pool_size=2))
     
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
     #model.add(Dense(1024))
-    #model.add(BatchNormalization(momentum=momentum))
     #model.add(Activation(act))
     #model.add(LeakyReLU(alpha=0.2))
 
@@ -556,7 +574,7 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
     Makes scatter plot of samples estimated from PE model
     """
     fig = plt.figure()
-    ax1 = fig.add_subplot(111)
+    ax1 = fig.add_subplot(223)
     
     if like is not None:
         # compute enclose probability contours
@@ -599,6 +617,19 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
     ax1.plot([truth[0],truth[0]],[np.min(y),np.max(y)],'-k', alpha=0.5)
     ax1.plot([np.min(x),np.max(x)],[truth[1],truth[1]],'-k', alpha=0.5)
 
+    # add histograms to corner plot
+    # chrip mass hist
+    ax2 = fig.add_subplot(221)
+    # inverse mass ratio hist
+    ax3 = fig.add_subplot(224)
+
+    # plot histograms
+    ax2.hist(pe_samples[0], bins=100)
+    ax2.hist(lalinf_dist[0][:],bins=100)
+    ax2.set_xticks([])
+    ax3.hist(pe_samples[1],bins=100,orientation=u'horizontal')
+    ax3.hist(lalinf_dist[1][:],bins=100,orientation=u'horizontal') 
+    ax3.set_yticks([])
 
     ks_score, ad_score, beta_score = overlap_tests(pe_samples,lalinf_dist,truth,kernel_cnn,kernel_lalinf)
     #print('mc KS result: {0}'.format(ks_score[0]))
@@ -609,7 +640,7 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
 
     ax1.set_xlabel(r'mc')
     ax1.set_ylabel(r'mass ratio')
-    ax1.legend(['Overlap: %s' % str(beta_score)])
+    ax1.legend(['Overlap: %s' % str(np.round(beta_score,3))])
     #ax1.set_xlim([np.min(all_pars[:,0]),np.max(all_pars[:,0])])
     #ax1.set_ylim([np.min(all_pars[:,1]),np.max(all_pars[:,1])])
     plt.savefig('%s/pe_samples%05d.png' % (outfile,index))
@@ -820,7 +851,7 @@ def main():
     os.system('mkdir -p %s' % out_path) 
 
     template_dir = 'templates/'
-    training_num = 100000  
+    training_num = 5000  
 
     # load in lalinference m1 and m2 parameters
     pickle_lalinf_pars = open("data/gw150914_mc_q_lalinf_post.sav")
@@ -1089,7 +1120,7 @@ def main():
             signal_batch_images = np.reshape(signal_batch_images, (signal_batch_images.shape[0],signal_batch_images.shape[1],1))
             #signal_batch_images /= np.max(signal_batch_images)
             # add some noise to 50% of batch help generalization to non-ideal input 
-            signal_batch_images[:int(signal_batch_images.shape[0]/2)] += np.random.normal(size=[int(signal_batch_images.shape[0]/2), 1024, 1],loc=0.0,scale=1.0) 
+            #signal_batch_images[:int(signal_batch_images.shape[0]/2)] += np.random.normal(size=[int(signal_batch_images.shape[0]/2), 1024, 1],loc=0.0,scale=1.0) 
 	    signal_batch_pars = signal_train_pars[idx]
    
             # normalize pars to be between 0 and 1
@@ -1193,7 +1224,7 @@ def main():
         #exit()
 
 	# first use the generator to make fake images - this is seeded with a size 100 random vector
-        noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
+        noise = np.random.uniform(size=[batch_size*n_noise_real, 100], low=-1.0, high=1.0)
         generated_images = generator.predict(noise)
 
         # making generated signal a 2d image
@@ -1206,18 +1237,23 @@ def main():
 
 	# make set of real and fake signal mages with labels
         signal_batch_images = np.reshape(signal_batch_images, (signal_batch_images.shape[0], signal_batch_images.shape[1], 1))
-        signal_batch_images_noise = np.random.normal(loc=0,scale=1,size=[batch_size,signal_batch_images.shape[1],1])
+        signal_batch_images_noise = np.random.normal(loc=0,scale=1,size=[batch_size*n_noise_real,signal_batch_images.shape[1],1])
+        # make signal copy for every noise realization
+        signal_batch_images_orig = signal_batch_images
+        for _idx in range(n_noise_real-1):
+            z = np.copy(signal_batch_images_orig)
+            signal_batch_images = np.concatenate((signal_batch_images,z), axis=0)
         signal_batch_images = np.concatenate((signal_batch_images,signal_batch_images_noise), axis=2)
         sX = np.concatenate((signal_batch_images, subtracted_signals_2d))
         sX = np.reshape(sX, (sX.shape[0],sX.shape[1],sX.shape[2],1))
-        sy = [1.0] * batch_size + [0.0] * batch_size
+        sy = [1.0] * (batch_size*n_noise_real) + [0.0] * (batch_size*n_noise_real)
 
         # train only the signal discriminator on the data
         sd_loss = signal_discriminator.train_on_batch(sX, sy)
 
 	# finally train the generator to make images that look like signals
-        noise = np.random.uniform(size=[batch_size, 100], low=-1.0, high=1.0)
-        sg_loss = signal_discriminator_on_generator.train_on_batch(noise, [1] * batch_size)
+        noise = np.random.uniform(size=[batch_size*n_noise_real, 100], low=-1.0, high=1.0)
+        sg_loss = signal_discriminator_on_generator.train_on_batch(noise, [1] * (batch_size*n_noise_real))
 
         # fill in the loss vector for plotting
         losses.append([sg_loss[0],sg_loss[1],sd_loss[0],sd_loss[1]])
@@ -1276,7 +1312,7 @@ def main():
                 #pe_std = [np.mean(np.abs(signal_train_pars[idx][:,0]-pe_samples[0].reshape(pe_samples[0].shape[0]))),
                 #          np.mean(np.abs(signal_train_pars[idx][:,1]-pe_samples[1].reshape(pe_samples[0].shape[0])))]
                 #pe_samples[:,1] /= 50.0
-                pe_std = [1.0,0.05]
+                pe_std = [0.5,0.025]
                 var_par1 = np.var(pe_samples[0])
                 var_par2 = np.var(pe_samples[1])
                 #try:
