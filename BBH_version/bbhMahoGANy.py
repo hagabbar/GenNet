@@ -47,7 +47,7 @@ os.environ["CUDA_VISIBLE_DEVICES"]=cuda_dev
 n_colors = 2		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
 n_pix = 1024	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0          # the noise standard deviation (if None then use noise images)
-batch_size = 64        # the batch size (twice this when testing discriminator)
+batch_size = 8        # the batch size (twice this when testing discriminator)
 pe_batch_size = 64
 max_iter = 100*1000 	# the maximum number of steps or epochs
 pe_iter = 1*100000         # the maximum number of steps or epochs for pe network 
@@ -153,8 +153,8 @@ def generator_model():
     padding = 'same'
     weights = 'glorot_uniform'
     alpha = 0.2
-    filtsize = 5
-    num_lays = 5
+    filtsize = 5 # 5 is best
+    num_lays = 2
     batchnorm = True
     
     # the first dense layer converts the input (100 random numbers) into
@@ -393,14 +393,17 @@ def signal_discriminator_model():
     padding = 'same'
     num_lays = 5
     batchnorm = True
-    filtsize = (5,1)
+    # so 16x2 gives best waveform reconstruction, but not best pe results? Kinda weird ...
+    # around 4000 epochs getting ~46% beta result.
+    # around 10000 epochs getting ~60% beta result.
+    filtsize = (16,2) # 5x2 is the best
 
     model = Sequential()
 
     # the first layer is a 2D convolution with filter size 5x5 and 64 neurons
     # the activation is tanh and we apply a 2x2 max pooling
     if num_lays >= 1:
-        model.add(Conv2D(64, filtsize, kernel_initializer=weights, input_shape=(n_pix,2,1), strides=(2,1), padding=padding))
+        model.add(Conv2D(64, (64,2), kernel_initializer=weights, input_shape=(n_pix,2,1), strides=(2,1), padding=padding))
         if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
         elif act == 'prelu': model.add(PReLU())
         else: model.add(Activation(act))
@@ -411,7 +414,7 @@ def signal_discriminator_model():
     # filter. More 2x2 max pooling and a tanh activation. The output is flattened
     # for input to the next dense layer
     elif num_lays >= 2:
-        model.add(Conv2D(128, filtsize, kernel_initializer=weights, strides=(2,1), padding=padding))
+        model.add(Conv2D(128, (32,2), kernel_initializer=weights, strides=(2,1), padding=padding))
         if batchnorm: model.add(BatchNormalization(momentum=momentum))
         if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
         elif act == 'prelu': model.add(PReLU())
@@ -420,7 +423,7 @@ def signal_discriminator_model():
         #model.add(MaxPooling1D(pool_size=2))
 
     elif num_lays >= 3:
-        model.add(Conv2D(256, filtsize, kernel_initializer=weights, strides=(2,1), padding=padding))
+        model.add(Conv2D(256, (16,2), kernel_initializer=weights, strides=(2,1), padding=padding))
         if batchnorm: model.add(BatchNormalization(momentum=momentum))
         if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
         elif act == 'prelu': model.add(PReLU())
@@ -429,7 +432,7 @@ def signal_discriminator_model():
         #model.add(MaxPooling1D(pool_size=2))
 
     elif num_lays >= 4:
-        model.add(Conv2D(512, filtsize, kernel_initializer=weights, strides=(2,1), padding=padding))
+        model.add(Conv2D(512, (8,2), kernel_initializer=weights, strides=(2,1), padding=padding))
         if batchnorm: model.add(BatchNormalization(momentum=momentum))
         if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
         elif act == 'prelu': model.add(PReLU())
@@ -438,7 +441,7 @@ def signal_discriminator_model():
         #model.add(MaxPooling1D(pool_size=2))
 
     elif num_lays >= 5:
-        model.add(Conv2D(1024, filtsize, kernel_initializer=weights, strides=(2,1), padding=padding))
+        model.add(Conv2D(1024, (4,2), kernel_initializer=weights, strides=(2,1), padding=padding))
         if batchnorm: model.add(BatchNormalization(momentum=momentum))
         if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
         elif act == 'prelu': model.add(PReLU())
@@ -851,7 +854,7 @@ def main():
     os.system('mkdir -p %s' % out_path) 
 
     template_dir = 'templates/'
-    training_num = 5000  
+    training_num = 50000  
 
     # load in lalinference m1 and m2 parameters
     pickle_lalinf_pars = open("data/gw150914_mc_q_lalinf_post.sav")
