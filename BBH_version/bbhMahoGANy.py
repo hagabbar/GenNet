@@ -387,7 +387,7 @@ def signal_discriminator_model():
     #act='tanh'
     momentum=0.99
     weights = 'glorot_uniform'
-    drate = 0.5
+    drate = 0.7
     act = 'leakyrelu'
     alpha = 0.2
     padding = 'same'
