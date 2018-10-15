@@ -10,7 +10,7 @@ from keras.layers.advanced_activations import LeakyReLU, PReLU, ThresholdedReLU,
 from keras.layers.core import Flatten
 from keras import backend as K
 from keras.engine.topology import Layer
-from keras.optimizers import Adam
+from keras.optimizers import Adam, RMSprop, Adagrad, Adadelta, Adamax, Nadam
 from tensorflow.examples.tutorials.mnist import input_data
 from scipy.stats import multivariate_normal as mvn
 from scipy.special import logit, expit
@@ -147,9 +147,9 @@ def generator_model():
     The generator that should train itself to generate noise free signals
     """
     model = Sequential()
-    act = 'relu'
+    act = 'leakyrelu'
     momentum = 0.99
-    drate = 0.0
+    drate = 0.5
     padding = 'same'
     weights = 'glorot_uniform'
     alpha = 0.2
@@ -387,7 +387,7 @@ def signal_discriminator_model():
     #act='tanh'
     momentum=0.99
     weights = 'glorot_uniform'
-    drate = 0.2
+    drate = 0.5
     act = 'leakyrelu'
     alpha = 0.2
     padding = 'same'
@@ -1026,12 +1026,14 @@ def main():
     # setup extra layer on generator
     data_subtraction_on_generator = generator_after_subtracting_noise(generator, data_subtraction)
     data_subtraction_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
+    #data_subtraction_on_generator.compile(loss='binary_crossentropy', optimizer=Nadam(lr=lr), metrics=['accuracy'])
 
     # setup generator training when we pass the output to the signal discriminator
     signal_discriminator_on_generator = generator_containing_signal_discriminator(data_subtraction_on_generator, signal_discriminator)
     set_trainable(signal_discriminator, False)	# set the discriminator as not trainable for this step
     if not chi_loss:
         signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
+        #signal_discriminator_on_generator.compile(loss='binary_crossentropy', optimizer=Nadam(lr=lr), metrics=['accuracy'])
     elif chi_loss:
         signal_discriminator_on_generator.compile(loss=chisquare_Loss, optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
 
@@ -1040,6 +1042,7 @@ def main():
     # discriminating between real and fake signals
     set_trainable(signal_discriminator, True)	# set it back to being trainable
     signal_discriminator.compile(loss='binary_crossentropy', optimizer=Adam(lr=lr, beta_1=0.5), metrics=['accuracy'])
+    #signal_discriminator.compile(loss='binary_crossentropy', optimizer=Nadam(lr=lr), metrics=['accuracy'])
     #elif chi_loss:
     #    signal_discriminator.compile(loss=chisquare_Loss, optimizer=Adam(lr=9e-5, beta_1=0.5), metrics=['accuracy'])
 
