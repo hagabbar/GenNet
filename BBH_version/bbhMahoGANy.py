@@ -49,7 +49,7 @@ n_pix = 1024	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0          # the noise standard deviation (if None then use noise images)
 batch_size = 8        # the batch size (twice this when testing discriminator)
 pe_batch_size = 64
-max_iter = 100*1000 	# the maximum number of steps or epochs
+max_iter = 500*1000 	# the maximum number of steps or epochs
 pe_iter = 1*100000         # the maximum number of steps or epochs for pe network 
 cadence = 100		# the cadence of output images
 save_models = True	# save the generator and discriminator models
@@ -149,12 +149,12 @@ def generator_model():
     model = Sequential()
     act = 'relu'
     momentum = 0.99
-    drate = 0.2
+    drate = 0.0
     padding = 'same'
     weights = 'glorot_uniform'
     alpha = 0.2
-    filtsize = 5 # 5 is best
-    num_lays = 2
+    filtsize = 4 # 10 is best
+    num_lays = 5
     batchnorm = True
     
     # the first dense layer converts the input (100 random numbers) into
@@ -202,7 +202,7 @@ def generator_model():
     
     elif num_lays >= 2:
         #model.add(UpSampling1D(size=2))
-        model.add(Conv1D(128, filtsize, kernel_initializer=weights, strides=1, padding=padding))
+        model.add(Conv1D(128, filtsize*2, kernel_initializer=weights, strides=1, padding=padding))
         #model.add(MaxPooling1D(pool_size=2))
         if batchnorm: model.add(BatchNormalization(momentum=momentum))
         if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
@@ -212,7 +212,7 @@ def generator_model():
 
     elif num_lays >= 3:
         #model.add(UpSampling1D(size=2))
-        model.add(Conv1D(256, filtsize, kernel_initializer=weights, strides=1, padding=padding))
+        model.add(Conv1D(256, filtsize*4, kernel_initializer=weights, strides=1, padding=padding))
         #model.add(MaxPooling1D(pool_size=2))
         if batchnorm: model.add(BatchNormalization(momentum=momentum))
         if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
@@ -222,7 +222,7 @@ def generator_model():
 
     elif num_lays >= 4:
         #model.add(UpSampling1D(size=2))
-        model.add(Conv1D(512, filtsize, kernel_initializer=weights, strides=1, padding=padding))
+        model.add(Conv1D(512, filtsize*8, kernel_initializer=weights, strides=1, padding=padding))
         #model.add(MaxPooling1D(pool_size=2))
         if batchnorm: model.add(BatchNormalization(momentum=momentum))
         if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
@@ -232,7 +232,7 @@ def generator_model():
 
     elif num_lays >= 5:
         #model.add(UpSampling1D(size=2))
-        model.add(Conv1D(1024, filtsize, kernel_initializer=weights, strides=1, padding=padding))
+        model.add(Conv1D(1024, filtsize*16, kernel_initializer=weights, strides=1, padding=padding))
         #model.add(MaxPooling1D(pool_size=2))
         if batchnorm: model.add(BatchNormalization(momentum=momentum))
         if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
@@ -627,11 +627,11 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
     ax3 = fig.add_subplot(224)
 
     # plot histograms
-    ax2.hist(pe_samples[0], bins=100)
-    ax2.hist(lalinf_dist[0][:],bins=100)
+    ax2.hist(pe_samples[0], bins=100, normed=True)
+    ax2.hist(lalinf_dist[0][:],bins=100, normed=True)
     ax2.set_xticks([])
-    ax3.hist(pe_samples[1],bins=100,orientation=u'horizontal')
-    ax3.hist(lalinf_dist[1][:],bins=100,orientation=u'horizontal') 
+    ax3.hist(pe_samples[1],bins=100,orientation=u'horizontal',normed=True)
+    ax3.hist(lalinf_dist[1][:],bins=100,orientation=u'horizontal', normed=True) 
     ax3.set_yticks([])
 
     ks_score, ad_score, beta_score = overlap_tests(pe_samples,lalinf_dist,truth,kernel_cnn,kernel_lalinf)
@@ -653,7 +653,7 @@ def plot_pe_samples(pe_samples,truth,like,outfile,index,x,y,lalinf_dist=None,pe_
     else: plt.savefig('%s/latest/pe_samples_gan.png' % (outfile), dpi=400)
     plt.close('all')
 
-    #return kernel_cnn, kernel_lalinf
+    return beta_score
 
 
 def make_contour_plot(ax,x,y,dataset,color='red',flip=False):
@@ -1215,6 +1215,7 @@ def main():
     # LOOP OVER BATCHES ############################
 
     losses = []		# initailise the losses for plotting 
+    beta_score_hist = []
     for i in range(max_iter):
 
 	# get random batch from images, should be real signals
@@ -1320,7 +1321,10 @@ def main():
                 var_par2 = np.var(pe_samples[1])
                 #try:
                 if var_par1 != 0 and var_par2 != 0:
-                    plot_pe_samples(pe_samples,signal_pars,L,out_path,i,x,y,lalinf_pars,pe_std)
+                    beta_score_hist.append([plot_pe_samples(pe_samples,signal_pars,L,out_path,i,x,y,lalinf_pars,pe_std)])
+                    plt.plot(np.linspace(cadence,i,len(beta_score_hist)),beta_score_hist)
+                    plt.savefig('%s/latest/beta_hist.png' % out_path)
+                    plt.close()
                 #except:
                 #    print('Skipping algebra error')
                 f = open('gan_pe_samples.sav', 'wb')
@@ -1342,9 +1346,9 @@ def main():
             
 
             # save posterior samples
-            #f = open('GAN_posterior_samples/posterior_samples_%05d.sav' % i, 'wb')
-            #pickle.dump(pe_samples, f)
-            #f.close()
-            #print '{}: saved posterior data to file'.format(time.asctime())
+            f = open('GAN_posterior_samples/posterior_samples_%05d.sav' % i, 'wb')
+            pickle.dump(pe_samples, f)
+            f.close()
+            print '{}: saved posterior data to file'.format(time.asctime())
 
 main()
