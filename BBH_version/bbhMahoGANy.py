@@ -448,7 +448,16 @@ def signal_discriminator_model():
         else: model.add(Activation(act))
         model.add(Dropout(drate))
         # model.add(MaxPooling1D(pool_size=2))
-    
+
+    elif num_lays >= 6:
+        model.add(Conv2D(1024, (4,2), kernel_initializer=weights, strides=(2,1), padding=padding))
+        if batchnorm: model.add(BatchNormalization(momentum=momentum))
+        if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
+        elif act == 'prelu': model.add(PReLU())
+        else: model.add(Activation(act))
+        model.add(Dropout(drate))
+        # model.add(MaxPooling1D(pool_size=2))    
+
     model.add(Flatten())
 
     # we now use a dense layer with 1024 outputs and a tanh activation
