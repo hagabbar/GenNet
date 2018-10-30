@@ -23,7 +23,9 @@ import pandas as pd
 safe = 2    # define the safe multiplication scale for the desired time length
 verb = False
 gw_tmp = True # add your own gw150914-like template at the end of array
-sample_num = 500000
+sample_num = 50000
+event_name = 'gw150914'
+event_time = '1126259462'
 
 class bbhparams:
     def __init__(self,mc,M,eta,m1,m2,ra,dec,iota,phi,psi,idx,fmin,snr,SNR):
@@ -66,7 +68,7 @@ def parser():
     # arguments for reading in a data file
     parser.add_argument('-N', '--Nsamp', type=int, default=sample_num, help='the number of samples')
     parser.add_argument('-Nn', '--Nnoise', type=int, default=0, help='the number of noise realisations per signal, if 0 then signal only')
-    parser.add_argument('-Nb', '--Nblock', type=int, default=100000, help='the number of training samples per output file')
+    parser.add_argument('-Nb', '--Nblock', type=int, default=sample_num, help='the number of training samples per output file')
     parser.add_argument('-f', '--fsample', type=int, default=1024, help='the sampling frequency (Hz)')
     parser.add_argument('-T', '--Tobs', type=int, default=2, help='the observation duration (sec)')
     parser.add_argument('-s', '--snr', type=float, default=56, help='the signal integrated SNR')   
@@ -310,7 +312,7 @@ def gen_par(fs,T_obs,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
     dec = -1.23649695537
     iota = 2.5#-0.8011436155469337
     phi = 1.5
-    psi = 1.75 
+    psi = 1.75
 
     # store params
     par = bbhparams(mc,M,eta,m12[0],m12[1],ra,dec,iota,phi,psi,idx,fmin,None,None)
@@ -377,8 +379,8 @@ def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None,gw_tmp=F
     whiten_hp = whiten_data(hp.data.data,T_obs,fs,psds,flag='fd')
     whiten_hc = whiten_data(hc.data.data,T_obs,fs,psds,flag='fd')
 
-    orig_hp = np.roll(np.fft.irfft(whiten_hp,T_obs*fs),-fs)
-    orig_hc = np.roll(np.fft.irfft(whiten_hc,T_obs*fs),-fs)# + 1j*np.fft.ifft(hc.data.data,4096).imag
+    orig_hp = np.roll(np.fft.irfft(whiten_hp,T_obs*fs),int(-fs))
+    orig_hc = np.roll(np.fft.irfft(whiten_hc,T_obs*fs),int(-fs))# + 1j*np.fft.ifft(hc.data.data,4096).imag
     #orig_hp = np.roll(np.fft.irfft(hp.data.data.real + 1j*hp.data.data.imag,T_obs*fs),-fs)
     #orig_hc = np.roll(np.fft.irfft(hc.data.data.real + 1j*hc.data.data.imag,T_obs*fs),-fs)
     #h_lal = lalsimulation.SimDetectorStrainREAL8TimeSeries(hp,hc,par.ra,par.dec,par.psi,lalsimulation.DetectorPrefixToLALDetector('H1')).data.data
@@ -426,24 +428,32 @@ def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None,gw_tmp=F
 
     	# make signal - apply antenna and shifts
     	ht_shift, hp_shift, hc_shift = make_bbh(orig_hp,orig_hc,fs,par.ra,par.dec,par.psi,det)
-        #if gw_tmp:
-        #    plt.plot(ht_shift[-1024:])
-        #    plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/latest/whitened_geneated_template.png')
-        #    plt.close()
-        #    exit() 
+        if gw_tmp:
+            plt.plot(ht_shift[int(ref_idx-int(fs/2)):int(ref_idx+int(fs/2))])
+            plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/latest/whitened_geneated_template.png')
+            plt.close()
+
     	# place signal into timeseries - including shift
-    	ht_temp = ht_shift[int(ref_idx-par.idx):]
-    	hp_temp = hp_shift[int(ref_idx-par.idx):]
-    	hc_temp = hc_shift[int(ref_idx-par.idx):]
-        #h_lal_temp = h_lal[int(h_lal_ref_idx-par.idx):]
+    	ht_temp = ht_shift[int(ref_idx-par.idx-11):]#np.roll(ht_shift,int(-(ref_idx-(N/2)-10)))
+    	hp_temp = hp_shift[int(ref_idx-par.idx-11):]#np.roll(hp_shift,int(-(ref_idx-(N/2)-10)))
+    	hc_temp = hc_shift[int(ref_idx-par.idx-11):]#np.roll(hc_shift,int(-(ref_idx-(N/2)-10)))
+        #ht_temp = ht_shift[int(ref_idx-par.idx):]
 
     	if len(ht_temp)<N:
             ts[j,:len(ht_temp)] = ht_temp
+            #if gw_tmp:
+            #    plt.plot(ts[j,:])
+            #    plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/latest/whitened_geneated_template.png')
+            #    plt.close()
             hp[j,:len(ht_temp)] = hp_temp
             hc[j,:len(ht_temp)] = hc_temp
             #hlal[j,:len(h_lal_temp)] = h_lal_temp            
         else:
             ts[j,:] = ht_temp[:N]
+            #if gw_tmp:
+            #    plt.plot(ts[j,:])
+            #    plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/latest/whitened_geneated_template.png')
+            #    plt.close()
             hp[j,:] = hp_temp[:N]
             hc[j,:] = hc_temp[:N]
             #hlal[j,:] = h_lal_temp[:N]
@@ -486,12 +496,12 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det):
     tvec = np.arange(len(hp))/float(fs)
 
     # compute antenna response and apply
-    Fp,Fc,_,_ = antenna.response(1126259462.0, ra, dec, 0, psi, 'radians', det )
+    Fp,Fc,_,_ = antenna.response(float(event_time), ra, dec, 0, psi, 'radians', det )
     ht = hp*Fp + hc*Fc     # overwrite the timeseries vector to reuse it
 
     # compute time delays relative to Earth centre
     frDetector =  lalsimulation.DetectorPrefixToLALDetector(det)
-    tdelay = lal.TimeDelayFromEarthCenter(frDetector.location,ra,dec,1126259462.0)
+    tdelay = lal.TimeDelayFromEarthCenter(frDetector.location,ra,dec,float(event_time))
     if verb: print '{}: computed {} Earth centre time delay = {}'.format(time.asctime(),det,tdelay)
 
     # interpolate to get time shifted signal
@@ -499,12 +509,13 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det):
     hp_tck = interpolate.splrep(tvec, hp, s=0)
     hc_tck = interpolate.splrep(tvec, hc, s=0)
     if gw_tmp: tnew = tvec - tdelay
-    else: tnew = tvec - tdelay + (np.random.uniform(low=-0.037370920181274414,high=0.0055866241455078125))
+    else: tnew = tvec - tdelay# + (np.random.uniform(low=-0.037370920181274414,high=0.0055866241455078125))
     new_ht = interpolate.splev(tnew, ht_tck, der=0,ext=1)
     new_hp = interpolate.splev(tnew, hp_tck, der=0,ext=1)
     new_hc = interpolate.splev(tnew, hc_tck, der=0,ext=1)
 
-    return new_ht, new_hp, new_hc    
+    #return new_ht, new_hp, new_hc    
+    return ht, hp, hc
 
 def sim_data(fs,T_obs,psds,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro',beta=[0.75,0.95]):
     """
@@ -588,7 +599,7 @@ def main():
     """
     snr_mn = 0.0
     snr_cnt = 0
-    lalinf_out_loc = '/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_MassNotFixed/lalinferencenest/engine'
+    lalinf_out_loc = '/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_MassNotFixed_%s/lalinferencenest/engine' % event_name
 
     # get the command line args
     args = parser()
@@ -597,8 +608,8 @@ def main():
     safeTobs = safe*args.Tobs
 
     # load gw1 50914 frequency series and unwhitened psd
-    unwht_wvf_file = np.loadtxt('%s/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-freqData.dat' % lalinf_out_loc)[:,1:]
-    sig_unwht_wvf_file = np.loadtxt('%s/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-freqDataWithInjection.dat' % lalinf_out_loc)[:,1:]
+    unwht_wvf_file = np.loadtxt('%s/lalinferencenest-0-H1-%s.0-0.hdf5H1-freqData.dat' % (lalinf_out_loc,event_time))[:,1:]
+    sig_unwht_wvf_file = np.loadtxt('%s/lalinferencenest-0-H1-%s.0-0.hdf5H1-freqDataWithInjection.dat' % (lalinf_out_loc,event_time))[:,1:]
     unwht_wvf_file = np.add(unwht_wvf_file[:,0],1j*unwht_wvf_file[:,1])
     sig_unwht_wvf_file = np.add(sig_unwht_wvf_file[:,0],1j*sig_unwht_wvf_file[:,1])
     plt.plot(unwht_wvf_file)
@@ -611,7 +622,7 @@ def main():
 
     # get gw150914 template
     h_t = sig_unwht_wvf_file - unwht_wvf_file
-    wvf_psd_file = np.loadtxt('%s/lalinferencenest-0-H1-1126259462.0-0.hdf5H1-PSD.dat' % lalinf_out_loc)
+    wvf_psd_file = np.loadtxt('%s/lalinferencenest-0-H1-%s.0-0.hdf5H1-PSD.dat' % (lalinf_out_loc,event_time))
 
     unwht_wvf_file = sig_unwht_wvf_file
 
@@ -625,6 +636,7 @@ def main():
     wht_wvf = np.fft.irfft(wht_wvf,4096)
     h_t = whiten_data(h_t,4,args.fsample,wvf_psd_file[:,1],'fd')
     h_t = np.fft.irfft(h_t,4096)
+    gw_norm_constant = 1.0/np.std(wht_wvf)
     print(np.var(wht_wvf),1.0/np.var(wht_wvf))
     print(np.std(wht_wvf),1.0/np.std(wht_wvf))
     plt.hist((wht_wvf)*1079.22,100,alpha=0.5,label='lal')
@@ -649,15 +661,15 @@ def main():
     #h_t = h_t[int((args.Tobs*args.fsample)-args.fsample/2.0):int((args.Tobs*args.fsample)+args.fsample/2.0)]
     wht_wvf = wht_wvf[int(((safeTobs/2)*args.fsample)-args.fsample/2.0):int(((safeTobs/2)*args.fsample)+args.fsample/2.0)]
     h_t = h_t[int(((safeTobs/2)*args.fsample)-args.fsample/2.0):int(((safeTobs/2)*args.fsample)+args.fsample/2.0)]
-    plt.plot(wht_wvf)
-    #plt.plot(h_t)
+    #plt.plot(wht_wvf)
+    plt.plot(h_t)
     plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/input_waveform.png')
     plt.close()
 
     # break up the generation into blocks of args.Nblock training samples
     nblock = int(np.ceil(float(args.Nsamp)/float(args.Nblock)))
     for i in xrange(nblock):
-
+        
     	# simulate the dataset and randomise it
         # only use Nnoise for the training data NOT the validation and test
     	print '{}: starting to generate data'.format(time.asctime())
@@ -665,37 +677,39 @@ def main():
     	ts, par = sim_data(args.fsample,safeTobs,psd,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.45,0.55])
         # plot actual waveforms
         for n in range(ts[0].shape[0]):
-            ts[0][n,0,:] *= 817.98
+            ts[0][n,0,:] *= gw_norm_constant #was 800 something for gw150914
             #plt.plot(ts[0][n,0,:], alpha=0.5, color='green')
-        #plt.plot(h_t * 817.98, alpha=0.5)#/np.max(h_t)) 1079.22
-        #plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/latest/whitened_geneated_template.png')
-        #plt.close()
+        plt.plot((h_t * gw_norm_constant), alpha=0.5, linewidth=0.5)#/np.max(h_t)) 
+        plt.plot(ts[0][-1,0,:], alpha=0.5, color='green', linewidth=0.5)
+        #plt.xlim([500,575])
+        plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/latest/whitened_geneated_template.png', dpi=700)
+        plt.close()
     	print '{}: completed generating data {}/{}'.format(time.asctime(),i+1,nblock)
 
     	# pickle the results
     	# save the timeseries data to file
-    	f = open(args.basename + '_ts_' + str(i) + '_' + str(sample_num) + 'Samp' + '.sav', 'wb')
+    	f = open(args.basename + event_name + '_ts_' + str(i) + '_' + str(sample_num) + 'Samp' + '.sav', 'wb')
     	cPickle.dump(ts, f, protocol=cPickle.HIGHEST_PROTOCOL)
     	f.close()
     	print '{}: saved timeseries data to file'.format(time.asctime())
 
     	# save the sample parameters to file
-    	f = open(args.basename + '_params_' + str(i) + '_' + str(sample_num) + 'Samp'+ '.sav', 'wb')
+    	f = open(args.basename + event_name + '_params_' + str(i) + '_' + str(sample_num) + 'Samp'+ '.sav', 'wb')
     	cPickle.dump(par, f, protocol=cPickle.HIGHEST_PROTOCOL)
     	f.close()
     	print '{}: saved parameter data to file'.format(time.asctime())
-
+        
         # save gw150914 whitened noisy waveform
-        f = open('data/' + 'gw150914' + str(i) + '.sav', 'wb')
+        f = open('data/' + event_name + str(i) + '.sav', 'wb')
         cPickle.dump(wht_wvf, f, protocol=cPickle.HIGHEST_PROTOCOL)
         f.close()
-        print '{}: saved gw150914 timeseries data to file'.format(time.asctime())
+        print '{}: saved {} timeseries data to file'.format(time.asctime(),event_name)
 
         # save gw150914 whitened template
-        f = open('data/' + 'GW150914_data' + '.pkl', 'wb')
+        f = open('data/' + event_name + '_data' + '.pkl', 'wb')
         cPickle.dump(h_t, f, protocol=cPickle.HIGHEST_PROTOCOL)
         f.close()
-        print '{}: saved gw150914 timeseries data to file'.format(time.asctime())
+        print '{}: saved {} timeseries data to file'.format(time.asctime(),event_name)
 
     print '{}: success'.format(time.asctime())
 
