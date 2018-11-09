@@ -37,6 +37,8 @@ import h5py
 from sympy import Eq, Symbol, solve
 #import statsmodels.api as sm
 from scipy import stats
+from scipy.signal import butter, lfilter
+from scipy.signal import freqs
 
 cuda_dev = "4"
 
@@ -50,9 +52,9 @@ K.set_session(sess)
 
 # define some global params
 n_colors = 2		# greyscale = 1 or colour = 3 (multi-channel not supported yet)
-n_pix = 1024	        # the rescaled image size (n_pix x n_pix)
+n_pix = 2048	        # the rescaled image size (n_pix x n_pix)
 n_sig = 1.0          # the noise standard deviation (if None then use noise images)
-batch_size = 8        # the batch size (twice this when testing discriminator)
+batch_size = 64        # the batch size (twice this when testing discriminator)
 pe_batch_size = 64
 max_iter = 500*1000 	# the maximum number of steps or epochs
 pe_iter = 5*100000         # the maximum number of steps or epochs for pe network 
@@ -62,7 +64,7 @@ do_pe = True		# perform parameter estimation?
 pe_cadence = 1000  	# the cadence of PE outputs
 pe_grain = 95           # fineness of pe posterior grid
 npar = 2 		# the number of parameters to estimate (PE not supported yet)
-N_VIEWED = 5           # number of samples to view when plotting
+N_VIEWED = 25           # number of samples to view when plotting
 chi_loss = False        # set whether or not to use custom loss function
 lr = 9e-5              # learning rate for all networks
 GW150914 = True        # run on lalinference produced GW150914 waveform 
@@ -74,9 +76,17 @@ retrain_pe_mod = False
 contour_cadence = 100   # the cadence of PE contour plot outputs
 n_noise_real = 1       # number of noise realizations per training sample
 event_name = 'gw150914'
+template_dir = 'templates/'
+training_num = 50000
+tag = '_srate-2048'
+
+# load in lalinference m1 and m2 parameters
+pickle_lalinf_pars = open("data/%s_mc_q_lalinf_post%s.sav" % (event_name,tag))
+lalinf_pars = pickle.load(pickle_lalinf_pars)
+
 
 # the locations of signal files and output directory
-signal_path = '/home/hunter.gabbard/CBC/GenNet/BBH_version/data/event_%s_psd.pkl' % event_name
+#signal_path = '/home/hunter.gabbard/CBC/GenNet/BBH_version/data/event_%s_psd.pkl' % event_name
 #pars_path = '/home/hunter.gabbard/Burst/GenNet/tests/data/burst/data_pars.pkl'
 if gw150914_tmp:
     out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/%s_template' % event_name 
@@ -258,7 +268,7 @@ def generator_model():
     model.add(Conv1D(1, filtsize, padding=padding))
     model.add(Activation('linear')) # this should be tanh
     model.summary()
-
+    exit()
     return model
 
 def signal_pe_model():
@@ -408,10 +418,12 @@ def signal_discriminator_model():
     padding = 'same'
     num_lays = 2
     batchnorm = False
+    maxpool = True
     # so 16x2 gives best waveform reconstruction, but not best pe results? Kinda weird ...
     # around 4000 epochs getting ~46% beta result.
     # around 10000 epochs getting ~60% beta result.
-    filtsize = (16,2) # 5x2 is the best
+    filtsize = (5,5) # 5x2 is the best
+    n_neuron_scale = 4
 
     model = Sequential()
 
@@ -420,61 +432,61 @@ def signal_discriminator_model():
     for i in range(num_lays):
         i += 1
         if i == 1:
-            model.add(Conv2D(64, (5,5), kernel_initializer=weights, input_shape=(n_pix,2,1), strides=(2,1), padding=padding))
+            model.add(Conv2D(64 * n_neuron_scale, filtsize, kernel_initializer=weights, input_shape=(n_pix,2,1), strides=(1,1), padding=padding))
             if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
             elif act == 'prelu': model.add(PReLU())
             else: model.add(Activation(act))
             model.add(Dropout(drate))
-            #model.add(MaxPooling1D(pool_size=2))
+            if maxpool: model.add(MaxPooling2D(pool_size=(2,1)))
     
         # the next layer is another 2D convolution with 128 neurons and a 5x5 
         # filter. More 2x2 max pooling and a tanh activation. The output is flattened
         # for input to the next dense layer
         elif i == 2:
-            model.add(Conv2D(128, (5,5), kernel_initializer=weights, strides=(2,1), padding=padding))
+            model.add(Conv2D(128*n_neuron_scale, filtsize, kernel_initializer=weights, strides=(1,1), padding=padding))
             #if batchnorm: model.add(BatchNormalization(momentum=momentum))
             if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
             elif act == 'prelu': model.add(PReLU())
             else: model.add(Activation(act))
             if batchnorm: model.add(BatchNormalization(momentum=momentum))
             model.add(Dropout(drate))
-            #model.add(MaxPooling1D(pool_size=2))
+            if maxpool: model.add(MaxPooling2D(pool_size=(2,1)))
 
         elif i == 3:
-            model.add(Conv2D(256, (5,5), kernel_initializer=weights, strides=(2,1), padding=padding))
+            model.add(Conv2D(256, filtsize, kernel_initializer=weights, strides=(1,1), padding=padding))
             if batchnorm: model.add(BatchNormalization(momentum=momentum))
             if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
             elif act == 'prelu': model.add(PReLU())
             else: model.add(Activation(act))
             model.add(Dropout(drate))
-            #model.add(MaxPooling1D(pool_size=2))
+            if maxpool: model.add(MaxPooling2D(pool_size=(2,1)))
 
         elif i == 4:
-            model.add(Conv2D(512, (5,5), kernel_initializer=weights, strides=(2,1), padding=padding))
+            model.add(Conv2D(512, filtsize, kernel_initializer=weights, strides=(1,1), padding=padding))
             if batchnorm: model.add(BatchNormalization(momentum=momentum))
             if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
             elif act == 'prelu': model.add(PReLU())
             else: model.add(Activation(act))
             model.add(Dropout(drate))
-            #model.add(MaxPooling1D(pool_size=2))
+            if maxpool: model.add(MaxPooling2D(pool_size=(2,1)))
 
         elif i == 5:
-            model.add(Conv2D(1024, (5,5), kernel_initializer=weights, strides=(2,1), padding=padding))
+            model.add(Conv2D(1024, filtsize, kernel_initializer=weights, strides=(1,1), padding=padding))
             if batchnorm: model.add(BatchNormalization(momentum=momentum))
             if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
             elif act == 'prelu': model.add(PReLU())
             else: model.add(Activation(act))
             model.add(Dropout(drate))
-            # model.add(MaxPooling1D(pool_size=2))
+            if maxpool: model.add(MaxPooling2D(pool_size=(2,1)))
 
         elif i == 6:
-            model.add(Conv2D(1024, (5,5), kernel_initializer=weights, strides=(2,1), padding=padding))
+            model.add(Conv2D(1024, filtsize, kernel_initializer=weights, strides=(1,1), padding=padding))
             if batchnorm: model.add(BatchNormalization(momentum=momentum))
             if act == 'leakyrelu': model.add(LeakyReLU(alpha=alpha))
             elif act == 'prelu': model.add(PReLU())
             else: model.add(Activation(act))
             model.add(Dropout(drate))
-            # model.add(MaxPooling1D(pool_size=2))    
+            if maxpool: model.add(MaxPooling2D(pool_size=(2,1)))    
 
     model.add(Flatten())
 
@@ -822,12 +834,13 @@ def overlap_tests(pred_samp,lalinf_samp,true_vals,kernel_cnn,kernel_lalinf):
 
     return ks_score, ad_score, beta_score
 
-def plot_waveform_est(signal_image,noise_signal,generated_images,out_path,i,plot_lalinf_wvf=False):
+def plot_waveform_est(signal_image,noise_signal,generated_images,out_path,i,plot_lalinf_wvf=False,zoom=False):
     # plot original waveform
     f, (ax1, ax2, ax3) = plt.subplots(3, 1, sharey=True)
     ax = signal_image
     ax1.plot(ax, color='cyan', alpha=0.5, linewidth=0.5)
     ax1.plot(noise_signal, color='green', alpha=0.35, linewidth=0.5)
+    if zoom==True: ax1.set_xlim((450,550))
     #ax1.set_title('signal + (sig+noise)')
 
     # plotable generated signals
@@ -854,25 +867,35 @@ def plot_waveform_est(signal_image,noise_signal,generated_images,out_path,i,plot
     ax2.fill_between(np.linspace(0,len(perc_75),num=len(perc_75)),perc_75, perc_25, lw=0,facecolor='#808b96')
     #ax2.set_title('gen + sig + (sig+noise)')
     ax2.set(ylabel='Amplitude (counts)')
+    if zoom==True: ax2.set_xlim((450,550))
 
     # plot residuals - generated images subtracted from the measured image
     # the first image is the true noise realisation
     residuals = np.transpose(np.transpose(noise_signal)-gen_sig)
     ax3.plot((residuals[:,0]), color='black', linewidth=0.5)
     ax3.plot((residuals), color='red', alpha=0.25, linewidth=0.5)
+    if zoom==True: ax3.set_xlim((450,550))
     #ax3.plot((noise_signal - ax), color='black', alpha=0.5, linewidth=0.5)
 
     #ax3.set_title('Residuals')
     ax3.set(xlabel='Time')
     # save waveforms plot
-    if not plot_lalinf_wvf:
+    if not plot_lalinf_wvf and zoom==False:
         plt.savefig('%s/waveform_results%05d.png' % (out_path,i), dpi=500)
         plt.savefig('%s/latest/most_recent_waveform.png' % out_path, dpi=400)
         print('Completed waveform plotting routine!')
-    if plot_lalinf_wvf:
+    elif plot_lalinf_wvf and zoom==False:
         plt.savefig('%s/latest/most_recent_lalinf_waveform.png' % out_path, dpi=400)
         print('Completed lalinf waveform plotting routine!')
-    plt.close()
+    elif plot_lalinf_wvf and zoom==True:
+        plt.savefig('%s/latest/most_recent_zoomed_lalinf_waveform.png' % out_path, dpi=400)
+        print('Completed lalinf waveform plotting routine!')
+    elif not plot_lalinf_wvf and zoom==True:
+        plt.savefig('%s/waveform_zoomed_results%05d.png' % (out_path,i), dpi=500)
+        plt.savefig('%s/latest/most_recent_zoomed_waveform.png' % out_path, dpi=400)
+        print('Completed waveform plotting routine!')
+
+    plt.close("all")
 
 def main():
 
@@ -881,14 +904,6 @@ def main():
 
     # setup output directory - make sure it exists
     os.system('mkdir -p %s' % out_path) 
-
-    template_dir = 'templates/'
-    training_num = 50000 
-
-    # load in lalinference m1 and m2 parameters
-    pickle_lalinf_pars = open("data/%s_mc_q_lalinf_post.sav" % event_name)
-    lalinf_pars = pickle.load(pickle_lalinf_pars)
-
 
     # load hplus and hcross pickle file
     #pickle_hp = open("%shp.pkl" % template_dir,"rb")
@@ -900,9 +915,9 @@ def main():
 
     # load time series template pickle file
     file_idx_list = []
-    pickle_ts = open("%s%s_ts_0_%sSamp.sav" % (template_dir,event_name,training_num),"rb")
+    pickle_ts = open("%s%s_ts_0_%sSamp%s.sav" % (template_dir,event_name,training_num,tag),"rb")
     ts = pickle.load(pickle_ts)
-    pickle_par = open("%s%s_params_0_%sSamp.sav" % (template_dir,event_name,training_num),"rb")
+    pickle_par = open("%s%s_params_0_%sSamp%s.sav" % (template_dir,event_name,training_num,tag),"rb")
     par = pickle.load(pickle_par)
     if len(file_idx_list) > 0:
         ts = np.array(ts[0][:-1])
@@ -914,12 +929,12 @@ def main():
     print("loading file: _ts_0_%sSamp.sav" % (training_num))
     print("loading file: _params_0_%sSamp.sav" % (training_num))
     for idx in file_idx_list:
-        pickle_ts = open("%s_ts_%s_%sSamp.sav" % (template_dir,str(idx),training_num),"rb")
+        pickle_ts = open("%s_ts_%s_%sSamp%s.sav" % (template_dir,str(idx),training_num,tag),"rb")
         ts_new = pickle.load(pickle_ts)
         ts = np.vstack((ts,ts_new[0]))
 
         # load corresponding parameters template pickle file
-        pickle_par = open("%s_params_%s_%sSamp.sav" % (template_dir,str(idx),training_num),"rb")
+        pickle_par = open("%s_params_%s_%sSamp%s.sav" % (template_dir,str(idx),training_num,tag),"rb")
         par_new = np.array(pickle.load(pickle_par))
         par_new = np.reshape(par_new,(par_new.shape[0],1))
         par = np.vstack((par,par_new))
@@ -976,9 +991,9 @@ def main():
     # choose fixed signal
     # pars will be default params in function
     if GW150914:
-        pickle_gw150914 = open("data/%s.sav" % event_name,"rb")
+        pickle_gw150914 = open("data/%s0%s.sav" % (event_name,tag),"rb")
         noise_signal = np.reshape(pickle.load(pickle_gw150914) * 817.98,(n_pix,1)) # 817.98
-        signal_image = pickle.load(open("data/%s_data.pkl" % event_name,"rb")) * 817.98 # 1079.22
+        signal_image = pickle.load(open("data/%s_data%s.pkl" % (event_name,tag),"rb")) * 817.98 # 1079.22
         noise_image = np.random.normal(0, n_sig, size=[1, signal_image.shape[0]])
         gan_noise_signal = np.transpose(signal_image + noise_image)
 
@@ -1011,10 +1026,10 @@ def main():
 
         # resample GW150914
         #noise_signal = resample(noise_signal[0],n_pix)
-        signal_image = resample(signal_image,n_pix)
+        #signal_image = resample(signal_image,n_pix)
 
-        peak_diff = np.abs(np.argmax(noise_signal)-np.argmax(signal_image))
-        signal_image = np.roll(signal_image,peak_diff)
+        #peak_diff = np.abs(np.argmax(noise_signal)-np.argmax(signal_image))
+        #signal_image = np.roll(signal_image,peak_diff)
 
         # set signal_pars m1 and m2
         if not gw150914_tmp:
@@ -1232,7 +1247,7 @@ def main():
 
                 # test accuracy of parameter estimation against lalinf results during training
                 L, x, y = None, None, None
-                more_generated_images = pickle.load(open('data/%s_cnn_sanity_check_ts.sav' % event_name)) # TAKE OUT when not doing cnn sanity check!!!
+                more_generated_images = pickle.load(open('data/%s_cnn_sanity_check_ts_mass-time-vary%s.sav' % (event_name,tag))) # TAKE OUT when not doing cnn sanity check!!!
                 more_generated_images = np.reshape(more_generated_images, (more_generated_images.shape[0],more_generated_images.shape[1],1))
                 pe_samples = signal_pe.predict(more_generated_images)
                 #pe_samples[:,1] /= 50.0
@@ -1262,6 +1277,23 @@ def main():
 	# first use the generator to make fake images - this is seeded with a size 100 random vector
         noise = np.random.uniform(size=[batch_size*n_noise_real, 100], low=-1.0, high=1.0)
         generated_images = generator.predict(noise)
+        
+        #Butterworth filter testing
+
+        #def butter_lowpass(cutOff, fs, order=5):
+        #    nyq = 0.5 * fs
+        #    normalCutoff = cutOff / nyq
+        #    b, a = butter(order, normalCutoff, btype='high', analog = True)
+        #    return b, a
+        #def butter_lowpass_filter(data, cutOff, fs, order=4):
+        #    b, a = butter_lowpass(cutOff, fs, order=order)
+        #    y = lfilter(b, a, data)
+        #    return y
+        #cutOff = 256 #cutoff frequency in rad/s
+        #fs = 1024.0 #sampling frequency in rad/s
+        #order = 20 #order of filter
+        #generated_images = butter_lowpass_filter(generated_images, cutOff, fs, order)[:]
+        
 
         # making generated signal a 2d image
         subtracted_signals = noise_signal - generated_images
@@ -1300,11 +1332,18 @@ def main():
 	    log_mesg = "%s  [sG loss: %f, acc: %f]" % (log_mesg, sg_loss[0], sg_loss[1])
             print(log_mesg)
 
-            # plot waveform estimates
-            lalinf_prod_waveforms = pickle.load(open('data/cnn_sanity_check_ts.sav'))
-            plot_waveform_est(signal_image,noise_signal,generated_images,out_path,i)
+            # plot waveform estimated
+            lalinf_prod_waveforms = pickle.load(open('data/%s_cnn_sanity_check_ts_mass-time-vary%s.sav' % (event_name,tag)))
+
+            # make new generator images to get better stats for plotting
+            noise = np.random.uniform(size=[1000, 100], low=-1.0, high=1.0)
+            generated_images = generator.predict(noise)
+
+            plot_waveform_est(signal_image,noise_signal,generated_images,out_path,i,zoom=False)
+            plot_waveform_est(signal_image,noise_signal,generated_images,out_path,i,zoom=True)
             if i == cadence:
-                plot_waveform_est(signal_image,noise_signal,lalinf_prod_waveforms,out_path,i,plot_lalinf_wvf=True)
+                plot_waveform_est(signal_image,noise_signal,lalinf_prod_waveforms,out_path,i,plot_lalinf_wvf=True,zoom=False)
+                plot_waveform_est(signal_image,noise_signal,lalinf_prod_waveforms,out_path,i,plot_lalinf_wvf=True,zoom=True)
 
 
             """
@@ -1333,6 +1372,8 @@ def main():
                 # first use the generator to make MANY fake images
         	noise = np.random.uniform(size=[4000, 100], low=-1.0, high=1.0)
         	more_generated_images = generator.predict(noise)
+                #more_generated_images = butter_lowpass_filter(more_generated_images, cutOff, fs, order)[:]
+                #more_generated_images = np.pad(more_generated_images, ((0,0),(256,256),(0,0)), 'constant', constant_values=(0, 0))
                 #more_generated_images = pickle.load(open('data/cnn_sanity_check_ts.sav')) + np.random.uniform(size=[3800,1024],low=0,high=0.01)
                 #test_imgs = pickle.load(open('data/cnn_sanity_check_ts.sav','rb'))
                 #test_imgs = test_imgs.reshape(test_imgs.shape[0],test_imgs.shape[1],1)
