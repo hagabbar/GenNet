@@ -29,20 +29,21 @@ gw_tmp = True
 batch_size = 3907
 event_name = 'gw150914'
 event_time = '1126259462'
+tag = '_srate-1024hz'
 # load gan pe samples. TEMPORARY!!!
 #with open('gan_pe_samples.sav', 'rb') as rfp:
 #    gan_pe_post = np.array(pickle.load(rfp))
 #with open('gan_pe_waveforms.sav', 'rb') as rfp:
 #    gan_pe_waveforms = np.array(pickle.load(rfp))
 # load in lalinference m1 and m2 parameters
-pickle_lalinf_pars = open("data/%s_mc_q_lalinf_post.sav" % event_name)
+pickle_lalinf_pars = open("data/%s_mc_q_lalinf_post_srate-1024hz.sav" % (event_name))
 lalinf_pars = pickle.load(pickle_lalinf_pars)
 #post_q = gan_pe_post[1]
 #post_mc = gan_pe_post[0]
 
-gan_post = pickle.load(open('/home/hunter.gabbard/CBC/GenNet/BBH_version/data/%s_m1_m2_lainf_post.sav' % event_name))
+gan_post = pickle.load(open('/home/hunter.gabbard/CBC/GenNet/BBH_version/data/%s_m1_m2_lainf_post_srate-1024hz.sav' % event_name))
 out_path = '/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template'
-gw150914_posteriors = pd.read_hdf('/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_mass-time-varry_%s/lalinferencenest/posterior_samples/posterior_H1_%s-0.hdf5' % (event_name,event_time),'lalinference/lalinference_nest/posterior_samples')
+gw150914_posteriors = pd.read_hdf('/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_mass-time-varry_%s_srate-1024/lalinferencenest/posterior_samples/posterior_H1_%s-0.hdf5' % (event_name,event_time),'lalinference/lalinference_nest/posterior_samples')
 
 gan_post = np.transpose(gan_post)
 
@@ -395,7 +396,7 @@ def gen_bbh(fs,T_obs,idx,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None, gw_
     f_low = 40            # lowest frequency of waveform (Hz)
     amplitude_order = 0
     phase_order = 7
-    f_max = 512
+    f_max = fs/2
     approximant = lalsimulation.IMRPhenomPv2
     #dist = gw150914_posteriors['dist'][idx] * 1e6*lal.PC_SI
     dist = 410e6 * lal.PC_SI
@@ -476,7 +477,7 @@ def gen_bbh(fs,T_obs,idx,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None, gw_
     	hc[j,:] *= win
 
         # compute SNR of pre-whitened data
-        intsnr.append(get_snr(ts[j,:],T_obs,fs,psds,par.fmin))
+        #intsnr.append(get_snr(ts[j,:],T_obs,fs,psds,par.fmin))
 
     # normalise the waveform using either integrated or peak SNR
     #intsnr = np.array(intsnr)
@@ -485,7 +486,7 @@ def gen_bbh(fs,T_obs,idx,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None, gw_
     #hp *= scale
     #hc *= scale
     #intsnr *= scale
-    if verb: print '{}: computed the network SNR = {}'.format(time.asctime(),snr)
+    #if verb: print '{}: computed the network SNR = {}'.format(time.asctime(),snr)
 
     return ts, hp, hc
 
@@ -522,7 +523,7 @@ def make_bbh(hp,hc,fs,ra,dec,psi,det,index,gw_tmp=False):
     new_hp = interpolate.splev(tnew, hp_tck, der=0,ext=1)
     new_hc = interpolate.splev(tnew, hc_tck, der=0,ext=1)
 
-    return new_ht, new_hp, new_hc    
+    return ht, hp, hc    
 
 def sim_data(fs,T_obs,psds,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro',beta=[0.75,0.95]):
     """
@@ -650,7 +651,7 @@ def main():
     """
     snr_mn = 0.0
     snr_cnt = 0
-    lalinf_out_loc = '/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_MassNotFixed_%s/lalinferencenest/engine' % event_name
+    lalinf_out_loc = '/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_mass-time-varry_%s_srate-1024/lalinferencenest/engine' % event_name
 
     # get the command line args
     args = parser()
@@ -675,10 +676,10 @@ def main():
     unwht_wvf_file = sig_unwht_wvf_file
 
     # whiten gw150914
-    wht_wvf = whiten_data(unwht_wvf_file,4,args.fsample,wvf_psd_file[:,1],flag='fd')
-    wht_wvf = np.fft.irfft(wht_wvf,4096)
-    h_t = whiten_data(h_t,4,args.fsample,wvf_psd_file[:,1],'fd')
-    h_t = np.fft.irfft(h_t,4096)
+    wht_wvf = whiten_data(unwht_wvf_file,safeTobs,args.fsample,wvf_psd_file[:,1],flag='fd')
+    wht_wvf = np.fft.irfft(wht_wvf,args.fsample*safeTobs)
+    h_t = whiten_data(h_t,safeTobs,args.fsample,wvf_psd_file[:,1],'fd')
+    h_t = np.fft.irfft(h_t,args.fsample*safeTobs)
     gw_norm_constant = 1.0/np.std(wht_wvf)
 
     wht_wvf = wht_wvf[int(((safeTobs/2)*args.fsample)-args.fsample/2.0):int(((safeTobs/2)*args.fsample)+args.fsample/2.0)]
@@ -702,7 +703,7 @@ def main():
         # plot actual waveforms
         for n in range(ts[0].shape[0]):
             ts[0][n,0,:] *= gw_norm_constant
-            #plt.plot(ts[0][n,0,:], alpha=0.5, color='green')
+            plt.plot(ts[0][n,0,:], alpha=0.5, color='green')
 
         # compute percentile curves
         perc_90 = []
@@ -718,11 +719,12 @@ def main():
 
         #plt.plot(ts[0][-1,0,:], alpha=0.5, color='green', linewidth=0.5)
         plt.plot(h_t * gw_norm_constant, alpha=0.5, color='cyan', linewidth=0.5) #1079.22
-        plt.fill_between(np.linspace(0,len(perc_90),num=len(perc_90)),perc_90, perc_5, lw=0,facecolor='#d5d8dc')
-        plt.fill_between(np.linspace(0,len(perc_75),num=len(perc_75)),perc_75, perc_25, lw=0,facecolor='#808b96')
+        #plt.fill_between(np.linspace(0,len(perc_90),num=len(perc_90)),perc_90, perc_5, lw=0,facecolor='#d5d8dc')
+        #plt.fill_between(np.linspace(0,len(perc_75),num=len(perc_75)),perc_75, perc_25, lw=0,facecolor='#808b96')
         plt.title('gen + sig + (sig+noise)')
         plt.savefig('%s/gan_pe_waveforms.png' % (out_path), dpi=500)
         plt.close()
+
         # load keras CNN model
         #signal_pe = keras.models.load_model('best_models/signal_pe.h5')    
         # predict pe samples
@@ -732,7 +734,7 @@ def main():
 
     	# pickle the results
     	# save the timeseries data to file
-    	f = open('data/%s_cnn_sanity_check_ts.sav' % event_name, 'wb')
+    	f = open('data/%s_cnn_sanity_check_ts_mass-time-vary%s.sav' % (event_name,tag), 'wb')
     	cPickle.dump(ts, f, protocol=cPickle.HIGHEST_PROTOCOL)
     	f.close()
     	print '{}: saved timeseries data to file'.format(time.asctime())

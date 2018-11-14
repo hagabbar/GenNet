@@ -5,13 +5,16 @@ import dill
 import pickle
 import numpy as np
 from sys import exit
-gw150914_posteriors = pd.read_hdf('/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_MassNotFixed/lalinferencenest/posterior_samples/posterior_H1_1126259462-0.hdf5','lalinference/lalinference_nest/posterior_samples')
+
+event_name = 'gw150914'
+event_time = '1126259462'
+posteriors = pd.read_hdf('/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_mass-time-varry_%s_srate-2048/lalinferencenest/posterior_samples/posterior_H1_%s-0.hdf5' % (event_name,event_time),'lalinference/lalinference_nest/posterior_samples')
 
 
 # load lalinference chirp mass
-post_mc = gw150914_posteriors['mc']
+post_mc = posteriors['mc']
 # load lalinference q
-post_q = gw150914_posteriors['q']
+post_q = posteriors['q']
 
 do_m1m2 = True
 do_mc_M = False
@@ -31,7 +34,7 @@ if do_m1m2:
         post_m2.append(float(solve(eqn_m2)[0]))
 
     lalinf_pars = np.array([post_m1,post_m2])
-    with open('gw150914_m1_m2_lainf_post.sav', 'wb') as f:
+    with open('%s_m1_m2_lainf_post_srate-2048.sav' % event_name, 'wb') as f:
         pickle.dump(lalinf_pars, f)
 
 if do_mc_M:
@@ -50,10 +53,10 @@ if do_mc_M:
         post_M.append(post_m1 + post_m2)
 
     lalinf_pars = np.array([post_mc,post_M]) 
-    with open('gw150914_mc_M_lainf_post.sav', 'wb') as f:
+    with open('%s_mc_M_lainf_post_srate-2048.sav' % event_name, 'wb') as f:
         pickle.dump(lalinf_pars, f)
 
 if do_mc_q:
     lalinf_pars = np.array([post_mc,post_q])
-    with open('gw150914_mc_q_lalinf_post.sav', 'wb') as f:
+    with open('%s_mc_q_lalinf_post_srate-2048.sav' % event_name, 'wb') as f:
         pickle.dump(lalinf_pars, f)

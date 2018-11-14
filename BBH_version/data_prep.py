@@ -23,9 +23,13 @@ import pandas as pd
 safe = 2    # define the safe multiplication scale for the desired time length
 verb = False
 gw_tmp = True # add your own gw150914-like template at the end of array
+do_time_grid = False # multiple merger time realizations for each signal
+oversamp = True # choose whether or not to oversample mass region of interest
+N_time_grid = 25
 sample_num = 50000
 event_name = 'gw150914'
 event_time = '1126259462'
+tag = '_srate-1024hz_oversamp'
 
 class bbhparams:
     def __init__(self,mc,M,eta,m1,m2,ra,dec,iota,phi,psi,idx,fmin,snr,SNR):
@@ -71,13 +75,14 @@ def parser():
     parser.add_argument('-Nb', '--Nblock', type=int, default=sample_num, help='the number of training samples per output file')
     parser.add_argument('-f', '--fsample', type=int, default=1024, help='the sampling frequency (Hz)')
     parser.add_argument('-T', '--Tobs', type=int, default=2, help='the observation duration (sec)')
-    parser.add_argument('-s', '--snr', type=float, default=56, help='the signal integrated SNR')   
-    parser.add_argument('-I', '--detectors', type=str, nargs='+',default=['H1'], help='the detectors to use')   
+    parser.add_argument('-s', '--snr', type=float, default=56, help='the signal integrated SNR')
+    parser.add_argument('-I', '--detectors', type=str, nargs='+',default=['H1'], help='the detectors to use')
     parser.add_argument('-b', '--basename', type=str,default='templates/', help='output file path and basename')
     parser.add_argument('-m', '--mdist', type=str, default='astro', help='mass distribution for training (astro,gh,metric)')
     parser.add_argument('-z', '--seed', type=int, default=1, help='the random seed')
 
     return parser.parse_args()
+
 
 def convert_beta(beta,fs,T_obs):
     """
@@ -120,7 +125,7 @@ def gen_psd(fs,T_obs,op='AdvDesign',det='H1'):
     N = T_obs * fs          # the total number of time samples
     dt = 1 / fs             # the sampling time (sec)
     df = 1 / T_obs          # the frequency resolution
-    psd = lal.CreateREAL8FrequencySeries(None, lal.LIGOTimeGPS(0), 0.0, df,lal.HertzUnit, N // 2 + 1)    
+    psd = lal.CreateREAL8FrequencySeries(None, lal.LIGOTimeGPS(0), 0.0, df,lal.HertzUnit, N // 2 + 1)
 
     if det=='H1' or det=='L1':
         if op == 'AdvDesign':
@@ -142,7 +147,7 @@ def gen_psd(fs,T_obs,op='AdvDesign',det='H1'):
             exit(1)
     else:
         print 'unknown detector - will add Virgo soon'
-        exit(1) 
+        exit(1)
 
     return psd
 
@@ -193,12 +198,14 @@ def whiten_data(data,duration,sample_rate,psd,flag='td'):
     else:
         return xf
 
+
 def gen_masses(m_min=5.0,M_max=100.0,mdist='astro'):
     """
     function returns a pair of masses drawn from the appropriate distribution
     """
     
     flag = False
+    #mdist = 'hunt_constrain'
     if mdist=='astro':
         if verb: print '{}: using astrophysical logarithmic mass distribution'.format(time.asctime())
         new_m_min = m_min
@@ -207,6 +214,19 @@ def gen_masses(m_min=5.0,M_max=100.0,mdist='astro'):
         while not flag:
             m12 = np.exp(np.log(new_m_min) + np.random.uniform(0,1,2)*(log_m_max-np.log(new_m_min)))
             flag = True if (np.sum(m12)<new_M_max) and (np.all(m12>new_m_min)) and (m12[0]>=m12[1]) else False
+        eta = m12[0]*m12[1]/(m12[0]+m12[1])**2
+        mc = np.sum(m12)*eta**(3.0/5.0)
+        return m12, mc, eta
+    elif mdist=='hunt_constrain':
+        if verb: print '{}: using astrophysical logarithmic mass distribution'.format(time.asctime())
+        new_m_min = m_min
+        new_M_max = M_max
+        log_m_max = np.log(new_M_max - new_m_min)
+        while not flag:
+            m12 = np.exp(np.log(new_m_min) + np.random.uniform(0,1,2)*(log_m_max-np.log(new_m_min)))
+            eta = m12[0]*m12[1]/(m12[0]+m12[1])**2
+            mc = np.sum(m12)*eta**(3.0/5.0)
+            flag = True if (np.sum(m12)<new_M_max) and (np.all(m12>new_m_min)) and (m12[0]>=m12[1]) and (m12[1]/m12[0] >= 0.5) and (mc >= 20.0) and (mc <= 35.0) else False
         eta = m12[0]*m12[1]/(m12[0]+m12[1])**2
         mc = np.sum(m12)*eta**(3.0/5.0)
         return m12, mc, eta
@@ -294,6 +314,7 @@ def gen_par(fs,T_obs,mdist='astro',beta=[0.75,0.95],gw_tmp=False):
 
     # pick new random max amplitude sample location - within beta fractions
     # and slide waveform to that location
+    if gw_tmp: beta = [0.5,0.5]
     low_idx,high_idx = convert_beta(beta,fs,T_obs)
     if low_idx==high_idx:
         idx = low_idx
@@ -345,7 +366,7 @@ def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None,gw_tmp=F
     f_low = 40            # lowest frequency of waveform (Hz)
     amplitude_order = 0
     phase_order = 7
-    f_max = 512      # maximum allowed frequency for FD waveforms
+    f_max = fs/2    # maximum allowed frequency for FD waveforms
     #approximant = lalsimulation.IMRPhenomD
     approximant = lalsimulation.IMRPhenomPv2
     dist = np.random.uniform(200e6,500e6)*lal.PC_SI  # put it as 1 MPc
@@ -434,9 +455,9 @@ def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None,gw_tmp=F
             plt.close()
 
     	# place signal into timeseries - including shift
-    	ht_temp = ht_shift[int(ref_idx-par.idx-11):]#np.roll(ht_shift,int(-(ref_idx-(N/2)-10)))
-    	hp_temp = hp_shift[int(ref_idx-par.idx-11):]#np.roll(hp_shift,int(-(ref_idx-(N/2)-10)))
-    	hc_temp = hc_shift[int(ref_idx-par.idx-11):]#np.roll(hc_shift,int(-(ref_idx-(N/2)-10)))
+    	ht_temp = ht_shift[int(ref_idx-par.idx-11):]#21 np.roll(ht_shift,int(-(ref_idx-(N/2)-10)))
+    	hp_temp = hp_shift[int(ref_idx-par.idx-11):]#21 np.roll(hp_shift,int(-(ref_idx-(N/2)-10)))
+    	hc_temp = hc_shift[int(ref_idx-par.idx-11):]#21 np.roll(hc_shift,int(-(ref_idx-(N/2)-10)))
         #ht_temp = ht_shift[int(ref_idx-par.idx):]
 
     	if len(ht_temp)<N:
@@ -468,20 +489,20 @@ def gen_bbh(fs,T_obs,psds,snr=1.0,dets=['H1'],beta=[0.75,0.95],par=None,gw_tmp=F
         #hlal[j,:] *= win
 
         # compute SNR of pre-whitened data
-        intsnr.append(get_snr(ts[j,:],T_obs,fs,psds,par.fmin))
+        #intsnr.append(get_snr(ts[j,:],T_obs,fs,psds,par.fmin))
         #intsnr.append(get_snr(ts[j,:],T_obs,fs,psd.data.data,par.fmin))
         #intsnr.append(get_snr(hlal[j,:],T_obs,fs,psds,par.fmin))        
 
     # normalise the waveform using either integrated or peak SNR
-    intsnr = np.array(intsnr)
-    scale = snr/np.sqrt(np.sum(intsnr**2))
+    #intsnr = np.array(intsnr)
+    #scale = snr/np.sqrt(np.sum(intsnr**2))
     #ts *= scale
     #hp *= scale
     #hc *= scale
     #intsnr *= scale
 
     #hlal *= scale
-    if verb: print '{}: computed the network SNR = {}'.format(time.asctime(),snr)
+    #if verb: print '{}: computed the network SNR = {}'.format(time.asctime(),snr)
 
     return ts, hp, hc, ts
 
@@ -563,15 +584,32 @@ def sim_data(fs,T_obs,psds,snr=1.0,dets=['H1'],Nnoise=25,size=1000,mdist='astro'
             # just generate noise free signal
 	    ts.append(np.array([t[int(((T_obs/2)*fs)-fs/2):int(((T_obs/2)*fs)+fs/2)] for t in ts_new]).reshape(ndet,-1)) #[int(fs/2):-int(fs/2)]
             #ts.append(np.array([whiten_data(t,T_obs,fs,psd.data.data)[int((T_obs/2*fs)-fs/2):int((T_obs/2*fs)+fs/2)] for t,psd in zip(ts_new,psds)]).reshape(ndet,-1))
-	    par.append(par_new)
-	    yval.append(1)
+            par.append(par_new)
+            yval.append(1)
             cnt += 1
             if verb: print '{}: completed {}/{} signal samples'.format(time.asctime(),cnt-npclass,int(size/2))
 
+            # add extra time variations for each sample
+            if do_time_grid:
+                # pick new random max amplitude sample location - within beta fractions
+                # and slide waveform to that location
+                for m in range(N_time_grid):
+                    low_idx,high_idx = convert_beta(beta,fs,T_obs)
+                    if low_idx==high_idx:
+                        idx = low_idx
+                    else:
+                        idx = int(np.random.randint(low_idx,high_idx,1)[0])
+                    par_new.idx=idx
+                    _,_,_,ts_new = gen_bbh(fs,T_obs,psds,snr=snr,dets=dets,beta=beta,par=par_new)
+                    ts.append(np.array([t[int(((T_obs/2)*fs)-fs/2):int(((T_obs/2)*fs)+fs/2)] for t in ts_new]).reshape(ndet,-1)) #[int(fs/2):-int(fs/2)]
+                    par.append(par_new)
+                    yval.append(1)
     # trim the data down to desired length
+    size = N_time_grid * sample_num 
     ts = np.array(ts)[:size]
     yval = np.array(yval)[:size]
     par = par[:size]
+    size = len(ts)
 
     # return randomised the data
     idx = np.random.permutation(size)
@@ -599,7 +637,7 @@ def main():
     """
     snr_mn = 0.0
     snr_cnt = 0
-    lalinf_out_loc = '/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_MassNotFixed_%s/lalinferencenest/engine' % event_name
+    lalinf_out_loc = '/home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_mass-time-varry_%s_srate-1024/lalinferencenest/engine' % event_name
 
     # get the command line args
     args = parser()
@@ -632,18 +670,18 @@ def main():
 
     # whiten gw150914
     #win = tukey(4*args.fsample,alpha=1.0/8.0)
-    wht_wvf = whiten_data(unwht_wvf_file,4,args.fsample,wvf_psd_file[:,1],'fd')
-    wht_wvf = np.fft.irfft(wht_wvf,4096)
-    h_t = whiten_data(h_t,4,args.fsample,wvf_psd_file[:,1],'fd')
-    h_t = np.fft.irfft(h_t,4096)
+    wht_wvf = whiten_data(unwht_wvf_file,safeTobs,args.fsample,wvf_psd_file[:,1],'fd')
+    wht_wvf = np.fft.irfft(wht_wvf,args.fsample*safeTobs)
+    h_t = whiten_data(h_t,safeTobs,args.fsample,wvf_psd_file[:,1],'fd')
+    h_t = np.fft.irfft(h_t,args.fsample*safeTobs)
     gw_norm_constant = 1.0/np.std(wht_wvf)
     print(np.var(wht_wvf),1.0/np.var(wht_wvf))
     print(np.std(wht_wvf),1.0/np.std(wht_wvf))
-    plt.hist((wht_wvf)*1079.22,100,alpha=0.5,label='lal')
-    plt.hist(np.random.normal(0, 1, size=[4096]),100,alpha=0.5,label='numpy')
-    plt.legend()
-    plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/input_waveform.png')
-    plt.close()
+    #plt.hist((wht_wvf)*1079.22,100,alpha=0.5,label='lal')
+    #plt.hist(np.random.normal(0, 1, size=[4096]),100,alpha=0.5,label='numpy')
+    #plt.legend()
+    #plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/input_waveform.png')
+    #plt.close()
     #pd.Series(wht_wvf).rolling(200).mean().plot(style='k')
     #plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/running_mean.png')
     #plt.close()
@@ -661,7 +699,7 @@ def main():
     #h_t = h_t[int((args.Tobs*args.fsample)-args.fsample/2.0):int((args.Tobs*args.fsample)+args.fsample/2.0)]
     wht_wvf = wht_wvf[int(((safeTobs/2)*args.fsample)-args.fsample/2.0):int(((safeTobs/2)*args.fsample)+args.fsample/2.0)]
     h_t = h_t[int(((safeTobs/2)*args.fsample)-args.fsample/2.0):int(((safeTobs/2)*args.fsample)+args.fsample/2.0)]
-    #plt.plot(wht_wvf)
+    plt.plot(wht_wvf)
     plt.plot(h_t)
     plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/input_waveform.png')
     plt.close()
@@ -674,39 +712,73 @@ def main():
         # only use Nnoise for the training data NOT the validation and test
     	print '{}: starting to generate data'.format(time.asctime())
         #psd = scipy.signal.resample(psd,257)
-    	ts, par = sim_data(args.fsample,safeTobs,psd,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.45,0.55])
+        if oversamp == True:
+            ts, par = sim_data(args.fsample,safeTobs,psd,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist='hunt_constrain',beta=[0.45,0.55])
+        else:
+    	    ts, par = sim_data(args.fsample,safeTobs,psd,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.45,0.55])
+        
+
         # plot actual waveforms
         for n in range(ts[0].shape[0]):
             ts[0][n,0,:] *= gw_norm_constant #was 800 something for gw150914
             #plt.plot(ts[0][n,0,:], alpha=0.5, color='green')
+
+        """
+        # add extra samples in mass region of interest for testing purposes
+        if oversamp == True:
+            ts_oversamp, par_oversamp = sim_data(args.fsample,safeTobs,psd,args.snr,args.detectors,args.Nnoise,size=args.Nblock,mdist='hunt_constrain',beta=[0.45,0.55])
+
+            # plot actual waveforms
+            for n in range(ts_oversamp[0].shape[0]):
+                ts_oversamp[0][n,0,:] *= gw_norm_constant #was 800 something for gw150914
+            ts_oversamp[0] = ts_oversamp[0][:-1]
+            par = par[:-1]
+            ts[0] = np.concatenate((ts[0],ts_oversamp[0]),axis=0)
+            ts[1] = np.concatenate((ts[1],ts_oversamp[1]),axis=0)
+            par = par + par_oversamp
+        """
+
+        if i != (nblock-1): 
+            ts[0] = ts[0][:-1]
+            par = par[:-1]
+
         plt.plot((h_t * gw_norm_constant), alpha=0.5, linewidth=0.5)#/np.max(h_t)) 
         plt.plot(ts[0][-1,0,:], alpha=0.5, color='green', linewidth=0.5)
-        #plt.xlim([500,575])
+        plt.xlim([412,612])
+        plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/latest/whitened_geneated_template.png', dpi=700)
+        plt.close()
+
+        signal_train_pars = []
+        for k in par:
+            signal_train_pars.append([k.mc,(k.m2/k.m1)])
+
+        signal_train_pars = np.array(signal_train_pars)
+        plt.scatter(signal_train_pars[:,0],signal_train_pars[:,1],s=0.5)
         plt.savefig('/home/hunter.gabbard/public_html/CBC/mahoGANy/gw150914_template/latest/whitened_geneated_template.png', dpi=700)
         plt.close()
     	print '{}: completed generating data {}/{}'.format(time.asctime(),i+1,nblock)
 
     	# pickle the results
     	# save the timeseries data to file
-    	f = open(args.basename + event_name + '_ts_' + str(i) + '_' + str(sample_num) + 'Samp' + '.sav', 'wb')
+    	f = open(args.basename + event_name + '_ts_' + str(i) + '_' + str(sample_num) + 'Samp' + tag + '.sav', 'wb')
     	cPickle.dump(ts, f, protocol=cPickle.HIGHEST_PROTOCOL)
     	f.close()
     	print '{}: saved timeseries data to file'.format(time.asctime())
 
     	# save the sample parameters to file
-    	f = open(args.basename + event_name + '_params_' + str(i) + '_' + str(sample_num) + 'Samp'+ '.sav', 'wb')
+    	f = open(args.basename + event_name + '_params_' + str(i) + '_' + str(sample_num) + 'Samp' + tag +'.sav', 'wb')
     	cPickle.dump(par, f, protocol=cPickle.HIGHEST_PROTOCOL)
     	f.close()
     	print '{}: saved parameter data to file'.format(time.asctime())
         
         # save gw150914 whitened noisy waveform
-        f = open('data/' + event_name + str(i) + '.sav', 'wb')
+        f = open('data/' + event_name + str(i) + tag + '.sav', 'wb')
         cPickle.dump(wht_wvf, f, protocol=cPickle.HIGHEST_PROTOCOL)
         f.close()
         print '{}: saved {} timeseries data to file'.format(time.asctime(),event_name)
 
         # save gw150914 whitened template
-        f = open('data/' + event_name + '_data' + '.pkl', 'wb')
+        f = open('data/' + event_name + '_data' + tag + '.pkl', 'wb')
         cPickle.dump(h_t, f, protocol=cPickle.HIGHEST_PROTOCOL)
         f.close()
         print '{}: saved {} timeseries data to file'.format(time.asctime(),event_name)
