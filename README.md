@@ -1,6 +1,3 @@
-# GenNet
-Repository for generating Burst type waveforms using generative adversarial networks. Other waveform models to be added later.
-
 # GAN for GW Parameter Estimation
 
 This is a repository which is used for generating posterior estimates on a binary black hole (BBH) waveform burried in noise. Other waveform models will be added at a later date. 
