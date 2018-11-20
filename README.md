@@ -14,8 +14,10 @@ These instructions will get you a copy of the project up and running on your loc
 Keras, tensorflow, scipy, matplotlib, numpy, PIL, time, pandas, pickle, gwpy, h5py, sympy, cuda, cudnn
 
 ```
-Give examples
+pip install --user Keras tensorflow scipy matplotlib numpy PIL time pandas pickle gwpy h5py sympy
 ```
+
+Don't forget to install CUDA and CUDNN on your machine.
 
 ### Installing
 
