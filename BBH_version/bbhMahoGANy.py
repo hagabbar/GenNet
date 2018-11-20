@@ -109,6 +109,7 @@ event_name = 'gw150914'        # event name
 template_dir = 'templates/'    # location of training templates directory
 training_num = 50000           # number of samples to use during training of either GAN or CNN 
 tag = '_srate-1024hz_oversamp' # special tag for some files used
+cnn_sanity_check_file = 'gw150914_cnn_sanity_check_ts_mass-time-vary_srate-1024hz.sav' # name of file used for checking absolute best performance of CNN
 cnn_noise_frac = 1.0/8.0       # fraction of training set which are noisy to be used in CNN training
 
 # load in lalinference m1 and m2 parameters
@@ -1224,7 +1225,7 @@ def main():
 
                 # test accuracy of parameter estimation against lalinf results during training
                 L, x, y = None, None, None
-                more_generated_images = pickle.load(open('data/%s_cnn_sanity_check_ts_mass-time-vary_srate-1024hz.sav' % (event_name))) # TAKE OUT when not doing cnn sanity check!!!
+                more_generated_images = pickle.load(open('data/%s' % (cnn_sanity_check_file)))
                 more_generated_images = np.reshape(more_generated_images, (more_generated_images.shape[0],more_generated_images.shape[1],1))
                 pe_samples = signal_pe.predict(more_generated_images)
                 plot_pe_samples(pe_samples,signal_pars,L,out_path,i,x,y,lalinf_pars,pe_std)
@@ -1304,7 +1305,7 @@ def main():
             print(log_mesg)
 
             # load waveforms derived from lalinference esimated parameters
-            lalinf_prod_waveforms = pickle.load(open('data/%s_cnn_sanity_check_ts_mass-time-vary_srate-1024hz.sav' % (event_name)))
+            lalinf_prod_waveforms = pickle.load(open('data/%s' % (cnn_sanity_check_file)))
 
             # make new generator images
             noise = np.random.uniform(size=[1000, 100], low=-1.0, high=1.0)
