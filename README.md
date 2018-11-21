@@ -32,7 +32,7 @@ Running of the whole pipeline is done in a few simple steps
 
 ### 1.) Lalinference
 
-run lalinference_pipe and submit run to condor in order to get lalinference posterior estimates on injection waveform. This will require that you have both an injection.xml and an injection.ini file. 
+Run lalinference_pipe and submit run to condor in order to get lalinference posterior estimates on injection waveform. This will require that you have both an injection.xml and an injection.ini file. 
 
 This assumes you have access to the LIGO caltech clusters.
 ```
@@ -43,13 +43,35 @@ lalinference_pipe -r injection_run_mass-time-varry_gw150914_srate-2048/ -I injec
 condor_submit_dag /home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_mass-time-varry_gw150914_srate-2048/multidag.dag
 ```
 
-### And coding style tests
+Make sure to point all the following scripts the lalinference_nest/engine directory of your lalinference run.
 
-Explain what these tests test and why
+### 2.) Convert lalinference parameters
+
+We will be doing parameter estimation on the chirp mass and the inverse mass ratio. Unfortunately, lalinference does not give these parameters explicitly, rather they have to be derived from the output of the posterior. We do this by using the following script.
 
 ```
-Give an example
+python get_lalinf_pars.py
+```  
+
+You will need to choose what parameters you would like to produce in the get_lalinf_pars file.
+
+### 3.) Making templates for training of CNN and GAN
+
+Now that we have the parameters for our lalinference posterior which we will be comparing our GAN/CNN results to, we now need to make training waveforms/parameters. This can be done by running the following script.
+
 ```
+python gw_template_maker.py
+```
+
+This will produce GW template time series files (denoted with ts in the filename) and their corresponding parameters (files denoted with pars).
+
+Some editing in the global parameters portion of the file will need to be done in order to specifiy output directory, lalinference parameters, and lalinference waveforms.
+
+### 4.) CNN sanity check waveforms
+
+```
+python lalinf_post_waveform_maker.py
+``` 
 ## Contributing
 
 Please read [CONTRIBUTING.md](https://gist.github.com/PurpleBooth/b24679402957c63ec426) for details on our code of conduct, and the process for submitting pull requests to us.
