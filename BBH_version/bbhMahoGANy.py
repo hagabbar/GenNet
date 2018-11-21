@@ -84,7 +84,7 @@ K.set_session(sess)
 n_pix = 1024	               # time series size
 n_sig = 1.0                    # the noise standard deviation (default is 1)
 batch_size = 8                 # the GAN batch size (twice this when testing discriminator)
-pe_batch_size = 64             # The CNN batch size
+pe_batch_size = 8             # The CNN batch size
 max_iter = 500*1000 	       # the maximum number of steps or epochs for GAN waveform network
 pe_iter = 5*100000             # the maximum number of steps or epochs for CNN pe network 
 cadence = 100		       # the cadence of priting/saving output for GAN
@@ -1200,7 +1200,7 @@ def main():
             
             # if new best network, plot output of PE 
             #if np.mean([pe_loss[0],pe_loss[1]]) <= np.min(np.array(pe_avg_losses)[:]) and i>5000:
-            if ((i % 5000 == 0) & (i>0)):
+            if ((i % 1000 == 0) & (i>0)):
 
                 # plot loss curves - non-log and log
                 plot_losses(pe_losses,'%s/pe_losses.png' % out_path,legend=['PE-GEN'])
