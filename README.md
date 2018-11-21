@@ -18,32 +18,29 @@ Don't forget to install CUDA and CUDNN on your machine.
 
 ### Installing
 
-A step by step series of examples that tell you how to get a development env running
-
-Say what the step will be
+Just simply git clone this repository like so.
 
 ```
-Give the example
+git clone https://github.com/hagabbar/GenNet.git
 ```
 
-And repeat
+In order to run the code, you will need to produce your own lalinference waveform and posterior estimates on the event of interest. See Eric Thrane's useful guide on how to do this [guide](http://users.monash.edu.au/~erict/Resources/lal/). I will add my own guide on how to do this at a later date.
 
+## Running the scripts
+
+Running of the whole pipeline is done in a few simple steps
+
+### 1.) Lalinference
+
+run lalinference_pipe and submit run to condor in order to get lalinference posterior estimates on injection waveform. This will require that you have both an injection.xml and an injection.ini file. 
+
+This assumes you have access to the LIGO caltech clusters.
 ```
-until finished
-```
+source /home/jveitch/lalsuites/master/etc/lalsuiterc
 
-End with an example of getting some data out of the system or using it for a little demo
+lalinference_pipe -r injection_run_mass-time-varry_gw150914_srate-2048/ -I injection_gw150914.xml injection_gw150914.ini
 
-## Running the tests
-
-Explain how to run the automated tests for this system
-
-### Break down into end to end tests
-
-Explain what these tests test and why
-
-```
-Give an example
+condor_submit_dag /home/hunter.gabbard/parameter_estimation/john_bayesian_tutorial/injection_run_mass-time-varry_gw150914_srate-2048/multidag.dag
 ```
 
 ### And coding style tests
