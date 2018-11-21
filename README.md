@@ -69,9 +69,23 @@ Some editing in the global parameters portion of the file will need to be done i
 
 ### 4.) CNN sanity check waveforms
 
+Given lalinference parameters, we will now produce simulated waveforms from those parameters. This is done so that we can test how well the CNN can perform if given ideal estimates on a noise-free waveform.
 ```
 python lalinf_post_waveform_maker.py
-``` 
+```
+
+This will output a file with cnn_sanity check in the name. It will contain an array of time series with their corresponding lalinference parameters.
+
+### 5.) Train CNN point estimator and GAN waveform estimator
+
+First train the CNN model by setting the variable do_only_old_pe_model in bbhMahoGANy.py to False. Models are saved every 5000 epochs. Once the CNN has been trained to your satisfaction, switch do_only_old_pe_model to True. Now run bbhMahoGANy.py again in order to train GAN to make noise-free waveform estimates on the event of interest.
+
+```
+python bbhMahoGANy.py
+```
+
+Good luck!
+
 ## Contributing
 
 Please read [CONTRIBUTING.md](https://gist.github.com/PurpleBooth/b24679402957c63ec426) for details on our code of conduct, and the process for submitting pull requests to us.
