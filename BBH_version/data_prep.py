@@ -122,6 +122,7 @@ def parser():
     parser.add_argument('-Nb', '--Nblock', type=int, default=sample_num, help='the number of training samples per output file')
     parser.add_argument('-f', '--fsample', type=int, default=1024, help='the sampling frequency (Hz)')
     parser.add_argument('-T', '--Tobs', type=int, default=2, help='the observation duration (sec)')
+    parser.add_argument('-I', '--detectors', type=str, nargs='+',default=['H1'], help='the detectors to use')
     parser.add_argument('-b', '--basename', type=str,default='templates/', help='output file path and basename')
     parser.add_argument('-m', '--mdist', type=str, default='astro', help='mass distribution for training (astro,gh,metric)')
     parser.add_argument('-z', '--seed', type=int, default=1, help='the random seed')
@@ -802,9 +803,9 @@ def main():
 
         # apply oversampling of a portion of the mass parameter space if True.
         if oversamp == True:
-            ts, par = sim_data(args.fsample,safeTobs,psd,args.Nnoise,size=args.Nblock,mdist='hunt_constrain',beta=[0.45,0.55])
+            ts, par = sim_data(args.fsample,safeTobs,psd,args.detectors,args.Nnoise,size=args.Nblock,mdist='hunt_constrain',beta=[0.45,0.55])
         else:
-    	    ts, par = sim_data(args.fsample,safeTobs,psd,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.45,0.55])
+    	    ts, par = sim_data(args.fsample,safeTobs,psd,args.detectors,args.Nnoise,size=args.Nblock,mdist=args.mdist,beta=[0.45,0.55])
         
 
         # apply normalization constant to all GW template waveforms
