@@ -98,7 +98,7 @@ We use [SemVer](http://semver.org/) for versioning. For the versions available, 
 
 * **Hunter Gabbard** - *lead developer* - [github account](https://github.com/hagabbar)
 * **Chris Messenger**
-* **Micheal Williams**
+* **Michael Williams**
 * **Jordan McGinn**
 
 ## License
